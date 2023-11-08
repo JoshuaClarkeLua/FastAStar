@@ -3,7 +3,6 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local GridUtil = require(ReplicatedStorage.Shared.GridUtil)
 local PriorityQueue = require(ReplicatedStorage.Shared.PriorityQueue)
 local Vector2Util = require(ReplicatedStorage.Shared.Vector2Util)
-local Vector3Util = require(ReplicatedStorage.Shared.Vector3Util)
 local CostGrid = require(ServerScriptService.Server.Pathfinding.CostGrid)
 local NodeUtil = require(ServerScriptService.Server.Pathfinding.CostGrid.NodeUtil)
 
@@ -195,6 +194,7 @@ function AJPS._jump(self, node, pNode, pG): (Vector2?, number?)
 	local dir = Vector2Util.sign(node - pNode)
 	local g = pG + Diagonal(node, pNode)
 
+
 	-- Check forced neighbors in the direction of travel
 	if AJPS._hasForcedNeighbors(self, node, dir) then
 		AJPS._queueJumpNode(self, node, pNode, g)
@@ -275,8 +275,6 @@ end
 local function reconstructPath(self, cNode): ()
 	while cNode do
 		table.insert(self.path, cNode)
-		-- local p = _doPart(cNode)
-		-- p.Color = Color3.new(1,0,0)
 		local pNode = self.parents[cNode]
 		cNode = pNode
 	end

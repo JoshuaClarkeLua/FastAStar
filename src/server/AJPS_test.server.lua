@@ -14,7 +14,7 @@ local origin = base.CFrame
 local offsetOrigin = origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)
 local gridSize = Vector2.new(bSize.X, bSize.Z)
 
-local handler = ParallelJobHandler.new(ServerScriptService.Server.Pathfinding.CostGrid.HandlerScript, 12, true)
+local handler = ParallelJobHandler.new(ServerScriptService.Server.Pathfinding.CostGrid.HandlerScript, 12, false)
 if not handler.IsReady then
 	handler.OnReady:Wait()
 end
@@ -58,35 +58,37 @@ end)
 
 local target = Vector2.new(math.random(0, gridSize.X),math.random(0, gridSize.Y))
 print(target)
+local s = os.clock()
 -- AJPS.findPath(Vector2.new(10,10), Vector2.new(1,1), Vector2.new(10,10))
 -- local path = AJPS.findPath(gridSize, Vector2.new(1,1), target, costList)
--- AJPS.findPath(gridSize, Vector2.new(1,1), Vector2.new(2, 200), costList)
-local path
-SharedTableRegistry:SetSharedTable("CostGrid", costList)
-local s = os.clock()
-local f = 0
-local thread = coroutine.running()
-for i = 1, 10 do
-	handler:Run(function(actor)
-		actor:SendMessage("Pathfind", gridSize)
-		return true
-	end, {
-		Pathfind = function(actor, _path)
-			path = actor:GetSharedTable(`Path`)
-		end
-	}):andThen(function()
-		f += 1
-		if f == 10 then
-			coroutine.resume(thread)
-		end
-	end)
-end
-coroutine.yield()
+local path = AJPS.findPath(gridSize, Vector2.new(1,1), Vector2.new(2, 200), costList)
+path = path.path
+-- local path
+-- SharedTableRegistry:SetSharedTable("CostGrid", costList)
+-- local f = 0
+-- local thread = coroutine.running()
+-- for i = 1, 10 do
+-- 	handler:Run(function(actor)
+-- 		actor:SendMessage("Pathfind", gridSize)
+-- 		return true
+-- 	end, {
+-- 		Pathfind = function(actor, _path)
+-- 			path = actor:GetSharedTable(`Path`)
+-- 		end
+-- 	}):andThen(function()
+-- 		f += 1
+-- 		if f == 10 then
+-- 			coroutine.resume(thread)
+-- 		end
+-- 	end)
+-- end
+-- coroutine.yield()
 print(os.clock() - s)
-if #path.path == 0 then
-	print('no path')
-end
-for _, node in ipairs(path.path) do
+-- task.wait()
+-- if SharedTable.size(path) == 0 then
+-- 	print('no path')
+-- end
+for _, node in path do
 	local p = _doPart(offsetOrigin:PointToWorldSpace(Vector3.new(node.X, bSize2.Y, node.Y)))
 	p.Color = Color3.new(1,0,0)
 end

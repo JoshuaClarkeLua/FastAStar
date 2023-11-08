@@ -3,7 +3,7 @@ name = "joshuaclarkelua/parallel-job-handler"
 description = "A module for running code in parallel."
 license = "MIT"
 authors = ["JCL"]
-version = "0.1.62"
+version = "0.1.64"
 
 
 registry = "https://github.com/UpliftGames/wally-index"

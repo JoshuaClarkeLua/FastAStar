@@ -372,8 +372,9 @@ Job.__index = Job
 	@param handler JobHandler -- The job handler
 	@return Job -- The job
 ]=]
-function Job.new(handler): Job
+function Job.new(handler, id: string?): Job
 	local self = setmetatable({
+		Id = id,
 		Running = false, -- whether the job was cancelled or not
 		OnFinished = Signal.new(),
 		--
@@ -610,6 +611,10 @@ end
 ]=]
 function Job:OnFinish(): Promise
 	return not self.Running and Promise.resolve() or Promise.fromEvent(self.OnFinished)
+end
+
+function Job:NumActors(): number
+	return self._actorsRunning
 end
 
 export type Job = typeof(Job.new(...)) & {
@@ -981,8 +986,8 @@ end
 
 	@return Job
 ]=]
-function JobHandler:NewJob(): Job
-	return Job.new(self)
+function JobHandler:NewJob(Id: string?): Job
+	return Job.new(self, Id)
 end
 
 --[=[
@@ -998,7 +1003,7 @@ end
 	@param jobFn (actor: Actor) -> boolean? -- The initial job function to run
 ]=]
 function JobHandler:Run(jobFn: (actor: Actor) -> boolean?, topicHandlers: {[string]: OnFinishedFn}?, Id: string?): Promise
-	local job: Job = self:NewJob()
+	local job: Job = self:NewJob(Id)
 	if not self.IsReady then
 		self.OnReady:Wait()
 	end
@@ -1007,9 +1012,8 @@ function JobHandler:Run(jobFn: (actor: Actor) -> boolean?, topicHandlers: {[stri
 			job:BindTopic(topic, handler)
 		end
 	end
-	job.Id = Id
 	job:Run(jobFn)
-	return job:OnFinish()--:andThenCall(self.Remove, self, job)
+	return job:OnFinish():finallyCall(self.Remove, self, job)
 end
 
 --[=[

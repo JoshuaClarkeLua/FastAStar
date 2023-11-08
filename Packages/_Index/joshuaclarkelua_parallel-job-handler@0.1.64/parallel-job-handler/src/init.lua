@@ -1,4 +1,5 @@
 local HttpService = game:GetService("HttpService")
+local SharedTableRegistry = game:GetService("SharedTableRegistry")
 local Promise = require(script.Parent.Promise)
 local Signal = require(script.Parent.Signal)
 
@@ -220,6 +221,22 @@ function ParallelJobActor:GetJobId(): string?
 	return self._actor:GetAttribute("JobId")
 end
 
+function ParallelJobActor:SetJobSharedTable(key: string, value: SharedTable?): ()
+	SharedTableRegistry:SetSharedTable(`{self:GetJobId()}_{key}`, value)
+end
+
+function ParallelJobActor:GetJobSharedTable(key: string): SharedTable?
+	return SharedTableRegistry:GetSharedTable(`{self:GetJobId()}_{key}`)
+end
+
+function ParallelJobActor:SetSharedTable(key: string, value: SharedTable?): ()
+	self:SetJobSharedTable(`{self._actor.Name}_{key}`, value)
+end
+
+function ParallelJobActor:GetSharedTable(key: string): SharedTable?
+	return self:GetJobSharedTable(`{self._actor.Name}_{key}`)
+end
+
 export type ParallelJobActor = typeof(ParallelJobActor.new(...)) & {
 	-- functions
 	new: () -> ParallelJobActor,
@@ -251,11 +268,10 @@ local jobActors = {} -- {[Actor]: JobActor}
 	@param actor Actor -- The actor to initialize
 	@return JobActor -- The job actor
 ]=]
-function JobActor.new(handler: JobHandler, actor: Actor): JobActor
+function JobActor.new(actor: Actor): JobActor
 	local self = setmetatable({
-		_handler = handler,
 		_actor = actor,
-		_pendingTasks = 0,
+		_messagesPending = 0,
 	}, JobActor)
 	jobActors[actor] = self
 	actor.Destroying:Connect(function()
@@ -279,13 +295,6 @@ function JobActor.get(actor: Actor): JobActor
 		error(`Job Actor not found! Did you forget to call Job.getActor() inside of your Job script?`)
 	end
 	return jobActor
-end
-
-function JobActor:_RemoveTask(): ()
-	self._pendingTasks -= 1
-	if self._pendingTasks == 0 then
-		self._handler:_ActorFinished(self, self:GetJobId())
-	end
 end
 
 --[=[
@@ -314,32 +323,24 @@ end
 	@param ... any -- Message arguments
 ]=]
 function JobActor:SendMessage(topic: string, ...: any): ()
-	self._pendingTasks += 1
-	self._actor:SendMessage(topic, ...)
+	task.defer(self._actor.SendMessage, self._actor, topic, ...)
+	self._messagesPending += 1
 end
 
-function JobActor:Spawn(taskFn: () -> ()): ()
-	self._pendingTasks += 1
-	task.spawn(function()
-		taskFn()
-		self:_RemoveTask()
-	end)
+function JobActor:SetJobSharedTable(key: string, value: SharedTable?): ()
+	SharedTableRegistry:SetSharedTable(`{self:GetJobId()}_{key}`, value)
 end
 
-function JobActor:Defer(taskFn: () -> ()): ()
-	self._pendingTasks += 1
-	task.defer(function()
-		taskFn()
-		self:_RemoveTask()
-	end)
+function JobActor:GetJobSharedTable(key: string): SharedTable?
+	return SharedTableRegistry:GetSharedTable(`{self:GetJobId()}_{key}`)
 end
 
-function JobActor:Delay(delay: number, taskFn: () -> ()): ()
-	self._pendingTasks += 1
-	task.delay(delay, function()
-		taskFn()
-		self:_RemoveTask()
-	end)
+function JobActor:SetSharedTable(key: string, value: SharedTable?): ()
+	self:SetJobSharedTable(`{self._actor.Name}_{key}`, value)
+end
+
+function JobActor:GetSharedTable(key: string): SharedTable?
+	return self:GetJobSharedTable(`{self._actor.Name}_{key}`)
 end
 
 export type JobActor = typeof(JobActor.new(...)) & {
@@ -524,7 +525,7 @@ function Job:_TopicReturned(jobActor: JobActor, topic: string, ...: any): JobFn?
 	-- 	stats.sumDT += dt
 	-- end
 	--
-	jobActor._pendingTasks -= 1
+	jobActor._messagesPending -= 1
 	local onFinishedFn = self._onFinishedFn[topic]
 	--
 	if onFinishedFn and onFinishedFn ~= true then
@@ -545,14 +546,16 @@ end
 	Called when the job is finished.
 ]=]
 function Job:_Finished(): ()
-	self.JobStats.TotalTime = os.clock() - self.JobStats.TotalTime
-	-- Debug message
-	local str = `\nJob '{self.Id}' Finished:\nTotal Time: {self.JobStats.TotalTime};\n`
-	-- str ..= 'Topic Stats:\n'
-	-- for topic, stats in pairs(self.TopicStats) do
-	-- 	str ..= `Topic '{topic}' -> Run Count: {stats.runCount}; Avg. Per Node: {stats.sumDT / stats.runCount};\n`
-	-- end
-	warn(str)
+	if self._debug then
+		self.JobStats.TotalTime = os.clock() - self.JobStats.TotalTime
+		-- Debug message
+		local str = `\nJob '{self.Id}' Finished:\nTotal Time: {self.JobStats.TotalTime};\n`
+		-- str ..= 'Topic Stats:\n'
+		-- for topic, stats in pairs(self.TopicStats) do
+		-- 	str ..= `Topic '{topic}' -> Run Count: {stats.runCount}; Avg. Per Node: {stats.sumDT / stats.runCount};\n`
+		-- end
+		warn(str)
+	end
 	--
 	self.Running = false
 	self.OnFinished:Fire(self.TopicStats)
@@ -684,7 +687,6 @@ function JobHandler.new(jobScript: Script, actors: number, debug: boolean?)
 		_topics = {} :: { [string]: true },
 		--
 		_jobs = {} :: { [string]: Job }, -- [jobId]: job,
-		_nextWait = os.clock() + 2
 	}, JobHandler)
 
 	handlers[self._id] = self
@@ -731,7 +733,7 @@ function JobHandler.new(jobScript: Script, actors: number, debug: boolean?)
 		actor.Name = i
 		actor.Parent = folder
 		self._actors[actor] = false
-		JobActor.new(self, actor)
+		JobActor.new(actor)
 		-- Add script
 		local _jobScript = jobScript:Clone()
 		_jobScript.Parent = actor
@@ -801,8 +803,12 @@ end
 	@param jobId string -- The job id
 	@return Job -- The job
 ]=]
-function JobHandler:_GetJob(jobId: string): Job?
-	return self._jobs[jobId]
+function JobHandler:_GetJob(jobId: string): Job
+	local job = self._jobs[jobId]
+	if not job then
+		error(`Job '{jobId}' not found!`)
+	end
+	return job
 end
 
 --[=[
@@ -838,10 +844,6 @@ end
 	@return boolean -- Whether a job function was run on the actor or not
 ]=]
 function JobHandler:_RunJobFn(actor: Actor): boolean
-	if os.clock() > self._nextWait then
-		task.wait()
-		self._nextWait = os.clock() + 2
-	end
 	local jobFn, job = self:_GetJobFn()
 	if not jobFn then
 		return false
@@ -854,19 +856,21 @@ function JobHandler:_RunJobFn(actor: Actor): boolean
 	local jobActor: JobActor = JobActor.get(actor)
 	local running = true
 	task.spawn(function()
+		jobActor._messagesPending = 0
 		jobActor:SetJobId(job._id)
-		jobActor._pendingTasks = 0
 		local _stopRunning = jobFn(jobActor)
 		running = false
 		if _stopRunning == true then
 			job:_RemoveJobFn(jobFn)
 		end
-		if jobActor._pendingTasks == 0 then
-			self:_ActorFinishedJob(jobActor, job)
+		if jobActor._messagesPending == 0 then
+			self:_ActorFinished(jobActor, job)
 		end
 	end)
 	if running then
-		error('Job function cannot yield. Use JobActor:AddTask(fn) to yield.')
+		error(
+			`Job function cannot yield! This may cause unnecessary calls to the job function because its running status is not updated until it returns.`
+		)
 	end
 	return true
 end
@@ -906,7 +910,7 @@ end
 	@param jobActor JobActor -- The job actor
 	@param job Job? -- The job that the actor was running
 ]=]
-function JobHandler:_SetActorInactive(jobActor: JobActor): ()
+function JobHandler:_SetActorInactive(jobActor: JobActor, job: Job?): ()
 	jobActor:SetJobId(nil)
 	self._activeActors -= 1
 	self._actors[jobActor._actor] = false
@@ -934,33 +938,12 @@ function JobHandler:_TopicReturned(actor: Actor, topic: string?, ...: any): ()
 	local jobActor: JobActor = JobActor.get(actor)
 	local job = self:_GetJob(jobActor:GetJobId())
 	--
-	if job and topic then
+	if topic then
 		job:_TopicReturned(jobActor, topic, ...)
 	end
 	-- Find another job fn to run
-	if jobActor._pendingTasks == 0 then
-		self:_ActorFinishedJob(jobActor, job)
-	end
-end
-
---[=[
-	@method _ActorFinishedJob
-	@within JobHandler
-	@private
-
-	Called when an actor finishes a task.
-
-	@param jobActor JobActor -- The job actor
-	@param job Job? -- The job that the actor was running
-]=]
-function JobHandler:_ActorFinishedJob(jobActor: JobActor, job: Job?): ()
-	if job then
-		job:_RemoveActor()
-	end
-	if self._totalJobFn == 0 then
-		self:_SetActorInactive(jobActor, job)
-	else
-		self:_RunJobFn(jobActor._actor)
+	if jobActor._messagesPending == 0 then
+		self:_ActorFinished(jobActor, job)
 	end
 end
 
@@ -972,13 +955,18 @@ end
 	Called when an actor finishes a task.
 
 	@param jobActor JobActor -- The job actor
-	@param jobId string -- The job id
+	@param job Job? -- The job that the actor was running
 ]=]
-function JobHandler:_ActorFinished(jobActor: JobActor, jobId: string): ()
-	local job = self:_GetJob(jobId)
-	self:_ActorFinishedJob(jobActor, job)
+function JobHandler:_ActorFinished(jobActor: JobActor, job: Job): ()
+	if job then
+		job:_RemoveActor()
+	end
+	if self._totalJobFn == 0 then
+		self:_SetActorInactive(jobActor, job)
+	else
+		self:_RunJobFn(jobActor._actor)
+	end
 end
-
 
 --[=[
 	@method GetActors
@@ -1027,7 +1015,7 @@ function JobHandler:Run(jobFn: (actor: Actor) -> boolean?, topicHandlers: {[stri
 		end
 	end
 	job:Run(jobFn)
-	return job:OnFinish():andThenCall(self.Remove, self, job)
+	return job:OnFinish():finallyCall(self.Remove, self, job)
 end
 
 --[=[
