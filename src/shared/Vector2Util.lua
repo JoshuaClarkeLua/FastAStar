@@ -32,4 +32,8 @@ function Util.sign(v: Vector2): Vector2
 	return Vector2.new(math.sign(v.X), math.sign(v.Y))
 end
 
+function Util.round(v: Vector2): Vector2
+	return Vector2.new(math.round(v.X), math.round(v.Y))
+end
+
 return Util
