@@ -288,36 +288,44 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 	
 	local goalGroup = goalLink.group
 
+	local s = 0
+	local gTable = {} -- [RoomLink]: number
 	local queue = {startLink} -- {RoomLink}
-	local parents = {}
+	iterateLinks(startLink, function(link: RoomLink)
+		gTable[link] = 0
+	end)
+	setLinkCosts(self, fromPos, gTable) -- Set first links' costs
+	local parents = {} -- [link]: link
 	local closed = {} -- [RoomLink]: true
 
-	local function addParent(t, child, parent): ()
-		if t[child] then
-			t[child][parent] = true
-		else
-			t[child] = {
-				[parent] = true
-			}
-		end
+	local function addParent(link, parent): ()
+		parents[link] = parent
 	end
 
-	--[[
-		STEP #1
-
-		Trace all possible link paths and save children
-	]]
-	local lastChildren = {}
+	local finalLinks: {[RoomLink]: number} = {}
 	while #queue > 0 do
 		local groupLink = table.remove(queue, 1)
+		local costs
+		if groupLink ~= startLink then
+			costs = getGroupLinkCosts(self, groupLink.pos, groupLink)
+		else
+			costs = gTable
+		end
 		iterateLinks(groupLink, function(parentLink: RoomLink)
 			if closed[parentLink] then
 				return
 			end
 
 			-- Update parentLink
+			local _g
 			if groupLink ~= startLink then
-				addParent(parents, parentLink, groupLink)
+				_g = gTable[groupLink] + costs[parentLink]
+				if _g < (gTable[parentLink] or math.huge) then
+					addParent(parentLink, groupLink)
+					gTable[parentLink] = _g
+				end
+			else
+				_g = costs[parentLink]
 			end
 
 			-- Get link that parentLink leads to
@@ -329,112 +337,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 			closed[nextLink] = true
 
 			-- Add parentLink to nextLink
-			addParent(parents, nextLink, parentLink)
-
-			-- Insert nextLink in finalLinks if it is in the goal group
-			if nextLink.group == goalGroup then
-				table.insert(lastChildren, nextLink)
-				return
-			end
-
-			-- Update nextLink parents
-			table.insert(queue, nextLink)
-		end)
-	end
-
-
-	--[[
-		STEP #2
-
-		Trace back the children that lead to the goal group
-	]]
-	closed = {}
-	queue = {}
-	local gTable = {} -- [RoomLink]: number
-	local children = {}
-	while #lastChildren > 0 do
-		local child = table.remove(lastChildren, 1)
-		local _parents = parents[child]
-		if not _parents then
-			-- iterateLinks(child, function(link: RoomLink)
-			-- 	-- Only add to queue if link has children
-			-- 	table.insert(queue, link)
-			-- 	gTable[link] = 0
-			-- end)
-			continue
-		end
-		for parent in pairs(_parents) do
-			addParent(children, parent, child)
-			if not parents[parent] then
-				-- Only add to queue if link has children
-				table.insert(queue, parent)
-				gTable[parent] = 0
-			end
-			if closed[parent] then continue end
-			closed[parent] = true
-			table.insert(lastChildren, parent)
-		end
-	end
-	setLinkCosts(self, fromPos, gTable) -- Set first links' costs
-
-
-	--[[
-		STEP #3
-
-		Find the best link path
-	]]
-	closed = {}
-	parents = {} -- [link]: link
-	local finalLinks: {[RoomLink]: number} = {}
-	while #queue > 0 do
-		local groupLink = table.remove(queue, 1)
-		local costs
-		if groupLink ~= startLink and children[groupLink] then
-			costs = {}
-			local goals = {groupLink.pos}
-			-- Get goals
-			iterateLinks(groupLink, function(link: RoomLink)
-				if children[groupLink][link] then
-					table.insert(goals, link.pos)
-				end
-			end)
-			-- Find goals
-			local _, data = AStarJPS.findReachable(self._gridSize, groupLink.pos, goals, false, self:GetMap(groupLink.map).nodesX, self:GetMap(groupLink.map).nodesZ)
-			iterateLinks(groupLink, function(link: RoomLink)
-				if link == groupLink or children[groupLink][link] then
-					costs[link] = data.g[link.nodeId]
-				end
-			end)
-		else
-			costs = gTable
-		end
-		iterateLinks(groupLink, function(parentLink: RoomLink)
-			if not children[parentLink] or not costs[parentLink] or closed[parentLink] then
-				return
-			end
-
-			-- Update parentLink
-			local _g
-			if groupLink ~= startLink then
-				_g = gTable[groupLink] + costs[parentLink]
-				if _g < (gTable[parentLink] or math.huge) then
-					parents[parentLink] = groupLink
-					gTable[parentLink] = _g
-				end
-			else
-				_g = costs[parentLink]
-			end
-
-			-- Get link that parentLink leads to
-			local nextLink = self:_GetOtherLink(parentLink)
-			-- Return if nextLink is not in parentLink's children, is closed or in the same group as its parent
-			if not children[parentLink][nextLink] or closed[nextLink] or nextLink.group == parentLink.group then
-				return
-			end
-			closed[nextLink] = true
-
-			-- Add parentLink to nextLink
-			parents[nextLink] = parentLink
+			addParent(nextLink, parentLink)
 			gTable[nextLink] = _g + parentLink.cost
 
 			-- Insert nextLink in finalLinks if it is in the goal group
@@ -449,14 +352,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 		end)
 	end
 
-
-
-
-	--[[
-		STEP #4
-
-		Find the best goal link to use
-	]]
+	-- Find finalLink costs
 	setLinkCosts(self, toPos, finalLinks)
 	local lowestG: number = math.huge
 	local finalLink: RoomLink
@@ -468,6 +364,8 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 		end
 	end
 
+	-- s = os.clock() - s
+	print(s)
 	return finalLink, parents
 end
 
@@ -512,7 +410,6 @@ type RoomLink = {
 	num: number,
 	cost: number,
 	pos: Vector2,
-	nodeId: number,
 	map: string,
 	toMap: string,
 	group: string,
