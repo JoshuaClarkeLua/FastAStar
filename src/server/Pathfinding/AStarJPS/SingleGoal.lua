@@ -179,7 +179,7 @@ function AJPS.queueJumpNode(self, node, pNode, _g): Vector2?
 	return
 end
 
-function AJPS.jump(self, node, pNode, pG): (Vector2?, number?)
+function AJPS.jump(self, node, pNode, _g): (Vector2?, number?)
 	local nodeId = NodeUtil.getNodeId(self.gridSize.X, node.X, node.Y)
 
 	if not canWalk(self, node.X, node.Y) then
@@ -187,6 +187,7 @@ function AJPS.jump(self, node, pNode, pG): (Vector2?, number?)
 	end
 	if node == self.goal then
 		self.parents[node] = pNode
+		self.g[nodeId] = _g + Diagonal(node, pNode)
 		return node
 	end
 	if self.closed[nodeId] then
@@ -196,15 +197,15 @@ function AJPS.jump(self, node, pNode, pG): (Vector2?, number?)
 	self.parents[node] = pNode
 
 	local dir = Vector2Util.sign(node - pNode)
-	local g = pG + Diagonal(node, pNode)
 
 	-- Check forced neighbors in the direction of travel
 	if hasForcedNeighbors(self, node, dir) then
-		return AJPS.queueJumpNode(self, node, pNode, g)
+		return AJPS.queueJumpNode(self, node, pNode, _g)
 	end
 
 	self.closed[nodeId] = true
 
+	local g = _g + Diagonal(node, pNode)
 	if dir.X ~= 0 and dir.Y ~= 0 then
 		local goalNode = AJPS.jump(self, node + Vector2.new(dir.X, 0), node, g)
 		if goalNode then
@@ -214,14 +215,13 @@ function AJPS.jump(self, node, pNode, pG): (Vector2?, number?)
 		if goalNode then
 			return goalNode
 		end
-		return AJPS.jump(self, node + dir, pNode, g)
+		return AJPS.jump(self, node + dir, pNode, _g)
 	end
 
 	local jx, jz = AJPS.findJumpNode(self, node, dir)
 	if jx then
 		pNode = node -- The parent node is now the previous diagonal node
 		local jNode = Vector2.new(jx, jz)
-		g += Diagonal(jNode, node)
 		return AJPS.queueJumpNode(self, jNode, node, g)
 	end
 	return

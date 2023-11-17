@@ -22,7 +22,8 @@ function AJPS._setup(
 	gridSize: Vector2,
 	start: Vector2,
 	heuristic: HeuristicName?,
-	...: CollisionMap
+	collisionsX: CollisionGrid.CollisionGridList,
+	collisionsZ: CollisionGrid.CollisionGridList
 )
 	start = Vector2Util.round(start)
 	-- Return if start or goal is outside of grid
@@ -34,7 +35,7 @@ function AJPS._setup(
 	self.gridSize = gridSize
 	self.start = start
 	-- Setup map lists
-	self.costsX, self.costsZ = CollisionGrid.combineMaps(...)
+	self.costsX, self.costsZ = collisionsX, collisionsZ
 	--
 	self.hFn = AJPSUtil.Heuristic[heuristic] or AJPSUtil.Heuristic.Diagonal
 	self.open = PriorityQueue.new(function(a, b)
@@ -68,6 +69,7 @@ function AJPS._getGoalData(self, goal: Vector2)
 	local goalBitZ = goal.X % 32
 	return {
 		goal = goal,
+		nodeId = NodeUtil.getNodeId(gridSize.X, goal.X, goal.Y),
 		goalGroupIdX = goalGroupIdX,
 		goalGroupIdZ = goalGroupIdZ,
 		goalBitX = goalBitX,
@@ -80,13 +82,14 @@ function AJPS.findPath(
 	start: Vector2,
 	goal: Vector2,
 	heuristic: HeuristicName?,
-	...: CollisionMap
-): Path
-	local self = AJPS._setup(gridSize, start, heuristic, ...)
-	if not self then return {} end
+	collisionsX: CollisionGrid.CollisionGridList,
+	collisionsZ: CollisionGrid.CollisionGridList
+): (Path, {[any]: any})
+	local self = AJPS._setup(gridSize, start, heuristic, collisionsX, collisionsZ)
+	if not self then return {}, self end
 	-- Setup goal data
 	local goalData = AJPS._getGoalData(self, goal)
-	if not goalData then return {} end
+	if not goalData then return {}, self end
 	self.goal = goalData.goal
 	self.goalGroupIdX = goalData.goalGroupIdX
 	self.goalGroupIdZ = goalData.goalGroupIdZ
@@ -100,13 +103,18 @@ function AJPS.findPath(
 
 
 	-- Find Goal
-	local goalNode = SingleGoal.findGoalJPS(self, self.start, self.startNodeId)
+	local goalNode
+	if self.start == self.goal then
+		goalNode = self.start
+	else
+		goalNode = SingleGoal.findGoalJPS(self, self.start, self.startNodeId)
+	end
 	if goalNode and goal ~= goalNode then
 		table.insert(self.path, goal)
 	end
 	-- Reconstruct path
 	reconstructPath(self, goalNode)
-	return self.path
+	return self.path, self
 end
 
 function AJPS.findReachable(
@@ -114,10 +122,11 @@ function AJPS.findReachable(
 	start: Vector2,
 	goals: {Vector2},
 	stopAtFirst: boolean?,
-	...: CollisionMap
-): {Vector2}
-	local self = AJPS._setup(gridSize, start, nil, ...)
-	if not self then return {} end
+	collisionsX: CollisionGrid.CollisionGridList,
+	collisionsZ: CollisionGrid.CollisionGridList
+): ({Vector2}, {[any]: any})
+	local self = AJPS._setup(gridSize, start, nil, collisionsX, collisionsZ)
+	if not self then return {}, self end
 	-- Setup goal data
 	local goalData = {}
 	for _, goal in ipairs(goals) do
@@ -126,7 +135,7 @@ function AJPS.findReachable(
 			table.insert(goalData, data)
 		end
 	end
-	if #goalData == 0 then return {} end
+	if #goalData == 0 then return {}, self end
 	self.goals = goalData
 	self.stopAtFirst = stopAtFirst or false
 	self.goalsReached = {} -- {[nodeId]: true}
@@ -138,7 +147,7 @@ function AJPS.findReachable(
 		local x,z = NodeUtil.getPosFromId(gridSize.X, nodeId)
 		table.insert(goalsReached, Vector2.new(x,z))
 	end
-	return goalsReached
+	return goalsReached, self
 end
 
 export type CollisionMap = CollisionGrid.CollisionMap

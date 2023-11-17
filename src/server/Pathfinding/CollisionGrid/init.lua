@@ -14,12 +14,15 @@ export type ObjectData = {
 	size: Vector3,	
 }
 export type ObjNodes = {number} -- {x, z, x, z, ...}
-export type CollisionMap = {{
-	OnChanged: RBXScriptSignal, -- (nodes: ObjNodes, added: boolean)
-	nodeMap: {[number]: number},
-	nodesX: {[number]: number},
-	nodesZ: {[number]: number},
-}}
+export type CollisionMap = {
+	height: number,
+	[number]: {
+		OnChanged: RBXScriptSignal, -- (nodes: ObjNodes, added: boolean)
+		nodeMap: {[number]: number},
+		nodesX: {[number]: number},
+		nodesZ: {[number]: number},
+	},
+}
 type Object = {
 	nodes: ObjNodes,
 	maps: {[string]: any}, -- [MapName]: any
@@ -173,11 +176,12 @@ function CollisionGrid:_GetQueued(amount: number): (...string & CFrame & Vector3
 	return id, data[1], data[2], self:_GetQueued(amount - 1)
 end
 
-function CollisionGrid:AddMap(map: string, data: CollisionMap?): ()
+function CollisionGrid:AddMap(map: string, mapHeight: number?, data: CollisionMap?): ()
 	if self.maps[map] then
 		error(`Map '{map}' already exists`)
 	end
 	self.maps[map] = data or {
+		height = mapHeight or 0,
 		[OBJ_TYPE.Collision] = {
 			OnChanged = Signal.new(),
 			nodeMap = {},
