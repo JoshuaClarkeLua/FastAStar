@@ -84,7 +84,7 @@ local function findLinkPath(): ()
 	local s = os.clock()
 	local hasPath, linkPath = linker:FindLinkPath(startPos, goalPos, 'main')
 	s = os.clock() - s
-	-- print(s)
+	print(s)
 	workspace.Parts:Destroy()
 	local folder = Instance.new("Folder")
 	folder.Name = 'Parts'

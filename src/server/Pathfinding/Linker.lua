@@ -97,6 +97,9 @@ local function newLink(linker, id: string, num: number, cost: number, nodePos: V
 		nodeId = NodeUtil.getNodeId(linker._gridSize.X, nodePos.X, nodePos.Y),
 		toMap = toMap,
 		group = HttpService:GenerateGUID(false),
+
+		-- caches
+		_linkCosts = {},
 	}
 	self._next = self
 	self._prev = self
@@ -390,21 +393,29 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 		local groupLink = table.remove(queue, 1)
 		local costs
 		if groupLink ~= startLink and children[groupLink] then
-			costs = {}
+			costs = {
+				[groupLink] = 0,
+			}
 			local goals = {groupLink.pos}
 			-- Get goals
 			iterateLinks(groupLink, function(link: RoomLink)
-				if children[groupLink][link] then
+				-- if link == groupLink then return end
+				if link._linkCosts[groupLink] then
+					costs[link] = link._linkCosts[groupLink]
+				elseif children[groupLink][link] then
 					table.insert(goals, link.pos)
 				end
 			end)
 			-- Find goals
-			local _, data = AStarJPS.findReachable(self._gridSize, groupLink.pos, goals, false, self:GetMap(groupLink.map).nodesX, self:GetMap(groupLink.map).nodesZ)
-			iterateLinks(groupLink, function(link: RoomLink)
-				if link == groupLink or children[groupLink][link] then
-					costs[link] = data.g[link.nodeId]
-				end
-			end)
+			if #goals > 1 then
+				local _, data = AStarJPS.findReachable(self._gridSize, groupLink.pos, goals, false, self:GetMap(groupLink.map).nodesX, self:GetMap(groupLink.map).nodesZ)
+				iterateLinks(groupLink, function(link: RoomLink)
+					if link == groupLink or children[groupLink][link] then
+						costs[link] = data.g[link.nodeId]
+						link._linkCosts[groupLink] = costs[link]
+					end
+				end)
+			end
 		else
 			costs = gTable
 		end
@@ -518,6 +529,9 @@ type RoomLink = {
 	group: string,
 	_prev: RoomLink,
 	_next: RoomLink,
+
+	-- caches
+	_linkCosts: {[RoomLink]: number},
 }
 type MapGroupLink = {
 	id: string,
