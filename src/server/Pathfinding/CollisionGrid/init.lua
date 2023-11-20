@@ -108,11 +108,11 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	return nodes
 end
 
-function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2): CollisionGrid
+function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2, handler: ParallelJobHandler.JobHandler?): CollisionGrid
 	origin = origin * CFrame.new(-gridSize.X/2, 0, -gridSize.Y/2)
-	local handler = ParallelJobHandler.new(script.Handler, 64, false)
-	if not handler.IsReady then
-		handler.OnReady:Wait()
+	local _handler = handler or ParallelJobHandler.new(script.Handler, 64, false)
+	if not _handler.IsReady then
+		_handler.OnReady:Wait()
 	end
 	local self = setmetatable({
 		maps = {} :: {[string]: CollisionMap}, -- [mapName]: CollisionMap
@@ -120,7 +120,7 @@ function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2): CollisionGri
 		objects = {} :: {[string]: Object}, -- [id]: Object
 		--
 		_handler = handler,
-		_job = handler:NewJob('CollisionGrid'),
+		_job = _handler:NewJob('CollisionGrid'),
 		_origin = origin,
 		_gridSize = gridSize,
 		_numGroupsX = math.ceil(gridSize.X/32),
@@ -184,11 +184,11 @@ function CollisionGrid:_GetQueued(amount: number): (...string & CFrame & Vector3
 	return id, data[1], data[2], self:_GetQueued(amount - 1)
 end
 
-function CollisionGrid:AddMap(map: string, data: CollisionMap?): ()
+function CollisionGrid:AddMap(map: string): ()
 	if self.maps[map] then
 		error(`Map '{map}' already exists`)
 	end
-	self.maps[map] = data or {
+	self.maps[map] = {
 		[OBJ_TYPE.Collision] = {
 			OnChanged = Signal.new(),
 			nodeMap = {},

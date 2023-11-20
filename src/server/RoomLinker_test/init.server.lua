@@ -4,49 +4,6 @@ local AStarJPS = require(ServerScriptService.Server.Pathfinding.AStarJPS)
 local CollisionGrid = require(ServerScriptService.Server.Pathfinding.CollisionGrid)
 local Linker = require(ServerScriptService.Server.Pathfinding.Linker)
 
-local base = workspace.Baseplate
-local bSize = base.Size
-local bSize2 = bSize/2
-local origin = base.CFrame
-local gridSize = Vector2.new(bSize.X, bSize.Z)
-
-local costGrid = CollisionGrid.newAsync(origin, gridSize)
-origin = costGrid:GetOrigin()
-costGrid:AddMap("main")
-
-local objects = workspace.Objects:GetChildren()
-local function _doAttachment(parent: BasePart, pos: Vector3, color: Color3?): BasePart
-	local p = Instance.new("Attachment")
-	p.Parent = parent
-	p.WorldPosition = pos
-	return p
-end
-for _, part: BasePart in ipairs(objects) do
-	local id = HttpService:GenerateGUID(false)
-	part:SetAttribute("Id", id)
-	costGrid:SetObject(id, part.CFrame, part.Size)
-	costGrid:AddMapObject(id, 'main', 'Collision')
-
-	part:GetPropertyChangedSignal('CFrame'):Connect(function()
-		costGrid:SetObject(id, part.CFrame, part.Size)
-	end)
-	part:GetPropertyChangedSignal('Size'):Connect(function()
-		costGrid:SetObject(id, part.CFrame, part.Size)
-	end)
-end
-
-for _, part: BasePart in ipairs(workspace.Negations:GetChildren()) do
-	local id = HttpService:GenerateGUID(false)
-	part:SetAttribute("Id", id)
-	costGrid:AddObject(id, part.CFrame, part.Size)
-	costGrid:AddMapObject(id, 'main', 'Negation')
-end
-
-local mainMap = costGrid:GetMapAsync("main")
-
-
-
-
 local function _doPart(pos: Vector3): BasePart
 	local p = Instance.new("Part")
 	p.Anchored = true
@@ -56,53 +13,145 @@ local function _doPart(pos: Vector3): BasePart
 	return p
 end
 
-CollisionGrid.iterX(gridSize, mainMap[CollisionGrid.OBJECT_TYPE.Collision].nodesX, function(x,z,cost)
-	local p = _doAttachment(base, origin:PointToWorldSpace(Vector3.new(x, bSize2.Y, z)), Color3.new(cost, cost, cost))
-	p:SetAttribute("Pos", `{x}, {z}`)
-	p:SetAttribute("Cost", cost)
-end)
---[[ mainMap[CollisionGrid.OBJECT_TYPE.Collision].OnChanged:Connect(function()
-	for _, p in ipairs(base:GetChildren()) do
-		if p:IsA("Attachment") then
-			p:Destroy()
-		end
-	end
-	CollisionGrid.iterX(gridSize, mainMap[CollisionGrid.OBJECT_TYPE.Collision].nodesX, function(x,z,cost)
-		local p = _doAttachment(base, origin:PointToWorldSpace(Vector3.new(x, bSize2.Y, z)), Color3.new(cost, cost, cost))
-		p:SetAttribute("Pos", `{x}, {z}`)
-		p:SetAttribute("Cost", cost)
+
+local Floor1 = workspace.Floor1
+local Floor2 = workspace.Floor2
+local Floor1Size2 = Floor1.Size/2
+local Floor2Size2 = Floor2.Size/2
+local Floor1GridSize = Vector2.new(Floor1.Size.X, Floor1.Size.Z)
+local Floor2GridSize = Vector2.new(Floor2.Size.X, Floor2.Size.Z)
+
+local Floor1Grid = CollisionGrid.newAsync(Floor1.CFrame, Floor1GridSize)
+local Floor2Grid = CollisionGrid.newAsync(Floor2.CFrame, Floor2GridSize)
+Floor1Grid:AddMap("Main", Floor1.CFrame, Floor1GridSize)
+Floor2Grid:AddMap("Main", Floor2.CFrame, Floor2GridSize)
+
+local Floor1Origin = Floor1Grid:GetOrigin()
+local Floor2Origin = Floor2Grid:GetOrigin()
+local data = {
+	Floor1 = {
+		origin = Floor1Origin,
+		gridSize = Floor1GridSize,
+		size = Floor1.Size,
+	},
+	Floor2 = {
+		origin = Floor2Origin,
+		gridSize = Floor2GridSize,
+		size = Floor2.Size,
+	}
+}
+
+for _, part: BasePart in ipairs(workspace.Floor1.Objects:GetChildren()) do
+	local id = HttpService:GenerateGUID(false)
+	part:SetAttribute("Id", id)
+	Floor1Grid:SetObject(id, part.CFrame, part.Size)
+	Floor1Grid:AddMapObject(id, 'Main', 'Collision')
+
+	part:GetPropertyChangedSignal('CFrame'):Connect(function()
+		Floor1Grid:SetObject(id, part.CFrame, part.Size)
 	end)
-end) ]]
+	part:GetPropertyChangedSignal('Size'):Connect(function()
+		Floor1Grid:SetObject(id, part.CFrame, part.Size)
+	end)
+end
+for _, part: BasePart in ipairs(workspace.Floor2.Objects:GetChildren()) do
+	local id = HttpService:GenerateGUID(false)
+	part:SetAttribute("Id", id)
+	Floor2Grid:SetObject(id, part.CFrame, part.Size)
+	Floor2Grid:AddMapObject(id, 'Main', 'Collision')
 
-local linker = Linker.new(gridSize)
-linker:AddMap('main', mainMap)
+	part:GetPropertyChangedSignal('CFrame'):Connect(function()
+		Floor2Grid:SetObject(id, part.CFrame, part.Size)
+	end)
+	part:GetPropertyChangedSignal('Size'):Connect(function()
+		Floor2Grid:SetObject(id, part.CFrame, part.Size)
+	end)
+end
 
-for _, link in ipairs(workspace.RoomLinks:GetChildren()) do
+local Floor1Map = Floor1Grid:GetMapAsync("Main")
+local Floor2Map = Floor2Grid:GetMapAsync("Main")
+
+
+--[[
+	LINKER
+]]
+local linker = Linker.new()
+linker:AddMap("Floor1", Floor1GridSize, Floor1Map)
+linker:AddMap("Floor2", Floor2GridSize, Floor2Map)
+
+for _, link in ipairs(workspace.Links:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	link:SetAttribute("LinkId", id)
 	local from = link:FindFirstChild("1")
 	local to = link:FindFirstChild("2")
-	local fromPos = origin:PointToObjectSpace(from.Position)
-	local toPos = origin:PointToObjectSpace(to.Position)
-	-- local cost = (fromPos - toPos).Magnitude
+	local fromMap = from:GetAttribute("Map")
+	local toMap = to:GetAttribute("Map") or fromMap
+	--
+	local fromMapData = data[fromMap]
+	assert(fromMapData, "Invalid map: "..fromMap)
+	local fromPos = fromMapData.origin:PointToObjectSpace(from.Position)
+	--
+	local toMapData = data[toMap]
+	assert(toMapData, "Invalid map: "..toMap)
+	local toPos = toMapData.origin:PointToObjectSpace(to.Position)
+	--
 	local cost = 0
-	linker:AddLink(id, cost, Vector2.new(fromPos.X,fromPos.Z), Vector2.new(toPos.X,toPos.Z), 'main')
+	linker:AddLink(id, cost, Vector2.new(fromPos.X,fromPos.Z), Vector2.new(toPos.X,toPos.Z), fromMap, toMap)
 	link.Name = id
 end
 
 local start = workspace.START
 local goal = workspace.GOAL
+-- local function findLinkPath(): ()
+-- 	-- Get start and goal positions
+-- 	local startPos = origin:PointToObjectSpace(start.Position)
+-- 	local goalPos = origin:PointToObjectSpace(goal.Position)
+-- 	startPos = Vector2.new(startPos.X, startPos.Z)
+-- 	goalPos = Vector2.new(goalPos.X, goalPos.Z)
+-- 	--
+-- 	local s = os.clock()
+-- 	local hasPath, linkPath = linker:FindLinkPath(startPos, goalPos, 'main')
+-- 	s = os.clock() - s
+-- 	-- print(s)
+-- 	workspace.Parts:Destroy()
+-- 	local folder = Instance.new("Folder")
+-- 	folder.Name = 'Parts'
+-- 	if #linkPath > 1 then
+-- 		local lastP
+-- 		for i = 1, #linkPath do
+-- 			local link = linkPath[i]
+-- 			local node = link.pos
+-- 			local p = _doPart(origin:PointToWorldSpace(Vector3.new(node.X, bSize2.Y, node.Y)))
+-- 			p.Parent = folder
+-- 			p.Color = Color3.new(1,0,0)
+-- 			p.Transparency = .5
+-- 			local beam = Instance.new("Beam")
+-- 			beam.FaceCamera = true
+-- 			beam.Color = ColorSequence.new(Color3.new(1,0,0))
+-- 			local a1 = Instance.new("Attachment")
+-- 			a1.Parent = p
+-- 			beam.Attachment0 = a1
+-- 			beam.Parent = p
+-- 			if lastP then
+-- 				local a2 = Instance.new("Attachment")
+-- 				a2.Parent = p
+-- 				lastP.Beam.Attachment1 = a2
+-- 			end
+-- 			lastP = p
+-- 		end
+-- 	end
+-- 	folder.Parent = workspace
+-- end
+
 local function findLinkPath(): ()
-	-- Get start and goal positions
-	local startPos = origin:PointToObjectSpace(start.Position)
-	local goalPos = origin:PointToObjectSpace(goal.Position)
+	local startPos = Floor1Origin:PointToObjectSpace(start.Position)
+	local goalPos = Floor2Origin:PointToObjectSpace(goal.Position)
 	startPos = Vector2.new(startPos.X, startPos.Z)
 	goalPos = Vector2.new(goalPos.X, goalPos.Z)
-	--
 	local s = os.clock()
-	local hasPath, linkPath = linker:FindLinkPath(startPos, goalPos, 'main')
+	local hasPath, linkPath = linker:FindLinkPath(startPos, goalPos, 'Floor1', 'Floor2')
 	s = os.clock() - s
-	-- print(s)
+	print(s)
 	workspace.Parts:Destroy()
 	local folder = Instance.new("Folder")
 	folder.Name = 'Parts'
@@ -110,8 +159,11 @@ local function findLinkPath(): ()
 		local lastP
 		for i = 1, #linkPath do
 			local link = linkPath[i]
+			local map = link.map
+			local mapOrigin = data[map].origin
+			local mapSize = data[map].size
 			local node = link.pos
-			local p = _doPart(origin:PointToWorldSpace(Vector3.new(node.X, bSize2.Y, node.Y)))
+			local p = _doPart(mapOrigin:PointToWorldSpace(Vector3.new(node.X, mapSize.Y/2, node.Y)))
 			p.Parent = folder
 			p.Color = Color3.new(1,0,0)
 			p.Transparency = .5
@@ -136,16 +188,6 @@ end
 start:GetPropertyChangedSignal("CFrame"):Connect(findLinkPath)
 goal:GetPropertyChangedSignal("CFrame"):Connect(findLinkPath)
 findLinkPath()
-
--- local s = os.clock()
--- AStarJPS.fill(gridSize, Vector2.new(0,0), CollisionGrid.combineMaps(mainMap))
--- s = os.clock() - s
--- print(s)
--- local s = os.clock()
--- local path = AStarJPS.findReachable(gridSize, Vector2.new(0,0), {Vector2.new(40,11)}, true, CollisionGrid.combineMaps(mainMap))
--- s = os.clock() - s
--- print(s)
--- print(path)
 
 local function doPath()
 	local s = os.clock()
