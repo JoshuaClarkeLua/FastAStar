@@ -192,9 +192,6 @@ function AJPS.findJumpNode(self, node, dir, _g): (number?, number?)
 end
 
 function AJPS.queueJumpNode(self, node, pNode, _g): Vector2?
-	if self.reachedAll == true then
-		return
-	end
 
 	local g = _g + Diagonal(node, pNode)
 	if isNodeGoal(self, node) then
@@ -206,6 +203,9 @@ function AJPS.queueJumpNode(self, node, pNode, _g): Vector2?
 		if self.stopAtFirst then
 			return node
 		end
+	end
+	if self.reachedAll == true then
+		return
 	end
 
 	local nodeId = NodeUtil.getNodeId(self.gridSize.X, node.X, node.Y)
@@ -234,10 +234,10 @@ function AJPS.jump(self, node, pNode, _g): Vector2?
 		return
 	end
 
-	local nodeId = NodeUtil.getNodeId(self.gridSize.X, node.X, node.Y)
 	if not canWalk(self, node.X, node.Y) then
 		return
 	end
+	local nodeId = NodeUtil.getNodeId(self.gridSize.X, node.X, node.Y)
 
 	if isNodeGoal(self, node) then
 		self.goalsReached[nodeId] = true

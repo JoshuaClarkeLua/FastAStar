@@ -154,21 +154,21 @@ local function scheduleMapUpdate(linker, map: RoomLinkCollisionMap): ()
 
 		-- 1. Remove collisions from the changed nodes
 		local changedNodes = {}
+		local main, mainId -- Used in Step #2
 		local _nodesX, _nodesZ = map.nodesX, map.nodesZ
-		local overshoot = linker._gridSize.X % 32
-		overshoot = overshoot ~= 0 and 32 - overshoot or 0
 		for groupId, group in pairs(map._groupChangesX) do
 			-- Add node ids to changedNodes
 			local _group = group
-			local baseNodeId = (groupId - 1) * 32 + 1
-			if overshoot > 0 then
-				local numGroups = math.ceil(linker._gridSize.X / 32)
-				baseNodeId -= math.floor(groupId / numGroups) * overshoot
-			end
-			_group = group
 			while _group ~= 0 do
 				local col = bit32.countrz(_group)
-				changedNodes[baseNodeId + col] = true
+				local x,z = CollisionGrid.GetCoords(linker._gridSize.Y, groupId, col)
+				local nodeId = NodeUtil.getNodeId(linker._gridSize.X, x, z)
+				--
+				if not main then
+					main = Vector2.new(x,z)
+					mainId = nodeId
+				end
+				changedNodes[nodeId] = true
 				_group = bit32.replace(_group, 0, col, 1)
 			end
 			-- Remove collisions from the nodes
@@ -185,29 +185,66 @@ local function scheduleMapUpdate(linker, map: RoomLinkCollisionMap): ()
 		end
 		
 		-- 2. Find the groups of connected nodes
-		local nodeGroups = {}
-		local nodeId, node = next(changedNodes)
-		while nodeId ~= nil do
-			local node = Vector2.new(NodeUtil.getPosFromId(linker._gridSize.X, nodeId))
-			changedNodes[nodeId] = nil
-			local nodes = {[nodeId] = true}
-			local data = AStarJPS.fill(linker._gridSize, node, map.nodesX, map.nodesZ)
-			for _nodeId in pairs(data.nodesReached) do
-				changedNodes[_nodeId] = nil
-				nodes[_nodeId] = true
+		local nodeGroups = {} -- stores 1 node of each group as dictionary
+		local nodeGroupsPosList = {} -- stores 1 node position of each group as list
+		while mainId do
+			changedNodes[mainId] = nil
+			-- Ignore nodes connected to main
+			local queue = {main}
+			repeat
+				local pNode = table.remove(queue, 1)
+				for _, dir in ipairs(GridUtil.CARDINAL_DIR) do
+					local node = pNode + dir
+					if not GridUtil.isInGrid(linker._gridSize.X, linker._gridSize.Y, node.X, node.Y) then
+						continue
+					end
+					local nodeId = NodeUtil.getNodeId(linker._gridSize.X, node.X, node.Y)
+					if not changedNodes[nodeId] then
+						continue
+					end
+					changedNodes[nodeId] = nil
+					table.insert(queue, node)
+				end
+			until #queue == 0
+			-- Add main to nodeGroups
+			nodeGroups[mainId] = main
+			-- Add to nodeGroupsPosList to use in AStarJPS.findReachable
+			table.insert(nodeGroupsPosList, main)
+			-- Go to next group
+			mainId = next(changedNodes)
+			if mainId then
+				main = Vector2.new(NodeUtil.getPosFromId(linker._gridSize.X, mainId))
 			end
-			table.insert(nodeGroups, nodes)
-			nodeId, node = next(changedNodes)
+		end
+		
+		-- Insert all group links into the nodeGroupsPosList
+		for _, link in pairs(map.links) do
+			table.insert(nodeGroupsPosList, link.pos)
 		end
 		
 		-- Get the groups which can a node group
+		local nodeId, node = next(nodeGroups)
 		local affectedGroups = {}
-		for _, nodes in pairs(nodeGroups) do
-			for _, link in pairs(map.links) do
-				if nodes[link.nodeId] and not affectedGroups[link.group] then
-					affectedGroups[link.group] = link
+		while nodeId do
+			nodeGroups[nodeId] = nil
+			local goalsReached, data = AStarJPS.findReachable(linker._gridSize, node, nodeGroupsPosList, false, _nodesX, _nodesZ)
+			if data then
+				if #goalsReached > 0 then
+					for goalId in pairs(data.goalsReached) do
+						-- Get groups at goal
+						local links = map.linksByNodeId[goalId]
+						if links then
+							-- Add the first link group to affectedGroups (the rest are in the same group)
+							local linkId = next(links)
+							local link = map.links[linkId]
+							affectedGroups[link.group] = link
+						end
+						-- Get node groups at goal and remove from next check
+						nodeGroups[goalId] = nil
+					end
 				end
 			end
+			nodeId, node = next(nodeGroups)
 		end
 		
 	
@@ -223,14 +260,12 @@ local function scheduleMapUpdate(linker, map: RoomLinkCollisionMap): ()
 		-- Update the groups (make new ones if needed)
 		local goals = {}
 		local queue = {}
-		for _, link in pairs(map.links) do
-			table.insert(goals, link.pos)
-		end
 		for _, link in pairs(affectedGroups) do
 			-- Reset their _linkCosts cache
 			iterateLinks(link, function(link: RoomLink)
 				link._linkCosts = {}
 				queue[link] = true
+				table.insert(goals, link.pos)
 				removeLink(linker, link)
 				link.group = nil :: any -- HttpService:GenerateGUID(false)
 			end)

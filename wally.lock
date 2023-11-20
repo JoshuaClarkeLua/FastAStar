@@ -10,7 +10,7 @@ dependencies = []
 [[package]]
 name = "jcl/pathfinding-ting"
 version = "0.1.0"
-dependencies = [["ParallelJobHandler", "joshuaclarkelua/parallel-job-handler@0.1.692"], ["Promise", "evaera/promise@4.0.0"], ["Signal", "sleitnick/signal@1.5.0"]]
+dependencies = [["ParallelJobHandler", "joshuaclarkelua/parallel-job-handler@0.1.692"], ["Promise", "evaera/promise@4.0.0"], ["Signal", "sleitnick/signal@1.5.0"], ["TableUtil", "sleitnick/table-util@1.2.1"]]
 
 [[package]]
 name = "joshuaclarkelua/parallel-job-handler"
@@ -20,4 +20,9 @@ dependencies = [["Promise", "evaera/promise@4.0.0"], ["Signal", "sleitnick/signa
 [[package]]
 name = "sleitnick/signal"
 version = "1.5.0"
+dependencies = []
+
+[[package]]
+name = "sleitnick/table-util"
+version = "1.2.1"
 dependencies = []

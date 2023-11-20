@@ -37,7 +37,7 @@ local objects = workspace.Objects:GetChildren()
 for _, part: BasePart in ipairs(objects) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
-	costGrid:AddObject(id, part.CFrame, part.Size)
+	costGrid:SetObject(id, part.CFrame, part.Size)
 	costGrid:AddMapObject(id, 'main', 'Collision')
 end
 
@@ -121,32 +121,6 @@ local function doPath()
 	end
 	folder.Parent = workspace
 end
-
-local function findGoals(_goals: {Vector3})
-	local goals = {}
-	for _, v3 in ipairs(_goals) do
-		table.insert(goals, Vector2.new(v3.X, v3.Z))
-	end
-	local s = os.clock()
-	local start = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.START.CFrame.Position)
-	local colX, colZ = CollisionGrid.combineMaps(mainMap)
-	local goalsReached = AJPS.findReachable(gridSize, Vector2.new(start.X,start.Z), goals, true, colX, colZ)
-	s = os.clock() - s
-	print(s)
-	print(goalsReached)
-	workspace.Parts:Destroy()
-	local folder = Instance.new("Folder")
-	folder.Name = 'Parts'
-	if #goalsReached > 2 then
-	end
-	folder.Parent = workspace
-end
-
--- local goals = {}
--- for _, goal in ipairs(workspace.Goals:GetChildren()) do
--- 	table.insert(goals, goal.Position)
--- end
--- findGoals(goals)
 
 workspace.START:GetPropertyChangedSignal("CFrame"):Connect(doPath)
 workspace.GOAL:GetPropertyChangedSignal("CFrame"):Connect(doPath)

@@ -3,6 +3,7 @@ local Imports = require(script.Parent.Imports)
 local ParallelJobHandler = require(ReplicatedStorage.Packages.ParallelJobHandler)
 local Promise = require(ReplicatedStorage.Packages.Promise)
 local Signal = require(ReplicatedStorage.Packages.Signal)
+local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
 local Vector2Util = Imports.Vector2Util
 local Vector3Util = Imports.Vector3Util
 local Bit32Util = require(script.Parent.Bit32Util)
@@ -15,9 +16,8 @@ export type ObjectData = {
 }
 export type ObjNodes = {number} -- {x, z, x, z, ...}
 export type CollisionMap = {
-	height: number,
 	[number]: {
-		OnChanged: RBXScriptSignal, -- (nodes: ObjNodes, added: boolean)
+		OnChanged: RBXScriptSignal, -- (nodes: {Vector2}, added: boolean)
 		nodeMap: {[number]: number},
 		nodesX: {[number]: number},
 		nodesZ: {[number]: number},
@@ -150,6 +150,14 @@ function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2): CollisionGri
 		end
 		if self.objects[id] ~= nil then
 			local object = self.objects[id]
+			-- Remove object old nodes that are not in the new nodes
+			local oldNodes = object.nodes
+			if oldNodes ~= nil then
+				for mapName, type in pairs(object.maps) do
+					self:_RemoveMapNodes(oldNodes, mapName, type)
+				end
+			end
+			-- Add new nodes
 			object.nodes = nodes
 			for mapName, type in pairs(object.maps) do
 				self:_AddMapNodes(nodes, mapName, type)
@@ -176,12 +184,11 @@ function CollisionGrid:_GetQueued(amount: number): (...string & CFrame & Vector3
 	return id, data[1], data[2], self:_GetQueued(amount - 1)
 end
 
-function CollisionGrid:AddMap(map: string, mapHeight: number?, data: CollisionMap?): ()
+function CollisionGrid:AddMap(map: string, data: CollisionMap?): ()
 	if self.maps[map] then
 		error(`Map '{map}' already exists`)
 	end
 	self.maps[map] = data or {
-		height = mapHeight or 0,
 		[OBJ_TYPE.Collision] = {
 			OnChanged = Signal.new(),
 			nodeMap = {},
@@ -211,15 +218,16 @@ function CollisionGrid:HasMap(map: string): boolean
 	return self.maps[map] ~= nil
 end
 
-function CollisionGrid:AddObject(id: string, cf: CFrame, size: Vector3): ()
+function CollisionGrid:SetObject(id: string, cf: CFrame, size: Vector3): ()
+	-- Create object table if it does not exist
 	if not self.objects[id] then
-		self.queued[id] = {cf, size}
 		self.objects[id] = {
 			maps = {},
 		}
-		-- Run job
-		self._job:Run(self._GetNodesInBox)
 	end
+	self.queued[id] = {cf, size}
+	-- Run job
+	self._job:Run(self._GetNodesInBox)
 end
 
 function CollisionGrid:RemoveObject(id: string): ()
@@ -252,7 +260,7 @@ function CollisionGrid:_AddMapNodes(nodes: ObjNodes, mapName: string, type: Obje
 	local default = MAP_DEFAULTS[type]
 	local bitSet = MAP_BIT_SET[type]
 	-- Add nodes
-	local changedNodes = {}
+	local changedNodes = {} :: {Vector2}
 	for i = 1, #nodes, 2 do
 		local x = nodes[i]
 		local z = nodes[i + 1]
@@ -261,13 +269,7 @@ function CollisionGrid:_AddMapNodes(nodes: ObjNodes, mapName: string, type: Obje
 		if typeMap.nodeMap[nodeId] then
 			typeMap.nodeMap[nodeId] += 1
 		else
-			if not changedNodes[x] then
-				changedNodes[x] = {
-					[z] = true,
-				}
-			else
-				changedNodes[x][z] = true
-			end
+			table.insert(changedNodes, Vector2.new(x, z))
 
 			-- Update nodesX
 			local groupId = CollisionGrid.GetGroupId(self._gridSize.X, x, z)
@@ -276,7 +278,7 @@ function CollisionGrid:_AddMapNodes(nodes: ObjNodes, mapName: string, type: Obje
 
 			-- Update nodeMap
 			if group == typeMap.nodesX[groupId] then -- Only add to node map when the bit was already set before (there are more than 2 objects occupying the same node)
-			typeMap.nodeMap[nodeId] = 2 -- 2 because the first collision is already counted
+				typeMap.nodeMap[nodeId] = 2 -- 2 because the first collision is already counted
 			--
 			-- Update nodesZ
 			else
@@ -303,7 +305,7 @@ function CollisionGrid:_RemoveMapNodes(nodes: ObjNodes, mapName: string, type: O
 	local default = MAP_DEFAULTS[type]
 	local bitUnset = MAP_BIT_UNSET[type]
 	-- Remove nodes
-	local changedNodes = {}
+	local changedNodes = {} :: {Vector2}
 	for i = 1, #nodes, 2 do
 		local x = nodes[i]
 		local z = nodes[i + 1]
@@ -315,13 +317,7 @@ function CollisionGrid:_RemoveMapNodes(nodes: ObjNodes, mapName: string, type: O
 				typeMap.nodeMap[nodeId] = nil
 			end
 		else
-			if not changedNodes[x] then
-				changedNodes[x] = {
-					[z] = true,
-				}
-			else
-				changedNodes[x][z] = true
-			end
+			table.insert(changedNodes, Vector2.new(x, z))
 
 			-- Update nodesX
 			local groupId = CollisionGrid.GetGroupId(self._gridSize.X, x, z)
@@ -575,6 +571,9 @@ end
 
 function CollisionGrid.concat(fn: (new: number, old: number) -> number, default: number, ...: CollisionGridList): CollisionGridList
 	local newList = ... -- sets newList as first list in ...
+	if newList == nil then
+		return {}
+	end
 	newList = table.clone(newList) -- Clone table to avoid modifying the original
 	local i = 2
 	local list = select(i, ...)
@@ -617,6 +616,52 @@ function CollisionGrid.combineMaps(...: CollisionMap): (CollisionGridList, Colli
 		collisionsX = CollisionGrid.concat(bit32.band, 0, collisionsX, table.unpack(negX))
 		collisionsZ = CollisionGrid.concat(bit32.band, 0, collisionsZ, table.unpack(negZ))
 	end
+	return collisionsX or {}, collisionsZ or {}
+end
+
+function CollisionGrid.combineGroups(groupsX: {[number]: any}, groupsZ: {[number]: any}, ...: CollisionMap): ()
+	local colX = {}
+	local colZ = {}
+	local negX = {}
+	local negZ = {}
+	local i = 1
+	local map = select(i, ...)
+	while map ~= nil do
+		local colXGroups = {}
+		local colZGroups = {}
+		local negXGroups = {}
+		local negZGroups = {}
+		for group in pairs(groupsX) do
+			colXGroups[group] = map[CollisionGrid.OBJECT_TYPE.Collision].nodesX[group]
+			negXGroups[group] = map[CollisionGrid.OBJECT_TYPE.Negation].nodesX[group]
+		end
+		for group in pairs(groupsZ) do
+			colZGroups[group] = map[CollisionGrid.OBJECT_TYPE.Collision].nodesZ[group]
+			negZGroups[group] = map[CollisionGrid.OBJECT_TYPE.Negation].nodesZ[group]
+		end
+		if next(colXGroups) then
+			table.insert(colX, colXGroups)
+		end
+		if next(colZGroups) then
+			table.insert(colZ, colZGroups)
+		end
+		if next(negXGroups) then
+			table.insert(negX, negXGroups)
+		end
+		if next(negZGroups) then
+			table.insert(negZ, negZGroups)
+		end
+		i += 1
+		map = select(i, ...)
+	end
+	-- Combine group lists
+	local collisionsX, collisionsZ
+	-- Combine collision maps
+	collisionsX = CollisionGrid.concat(bit32.bor, 0, table.unpack(colX))
+	collisionsZ = CollisionGrid.concat(bit32.bor, 0, table.unpack(colZ))
+	-- Combine negation maps with collision maps
+	collisionsX = CollisionGrid.concat(bit32.band, 0, collisionsX, table.unpack(negX))
+	collisionsZ = CollisionGrid.concat(bit32.band, 0, collisionsZ, table.unpack(negZ))
 	return collisionsX or {}, collisionsZ or {}
 end
 

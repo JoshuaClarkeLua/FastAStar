@@ -3,6 +3,9 @@ local Vector3Util = Imports.Vector3Util
 local Util = {}
 
 function Util.getNodeId(gridSize: number, nodeX: number, nodeZ: number): number
+	if nodeZ < 0 then
+		error("nodeZ must be greater than or equal to 0")
+	end
 	return (nodeX * gridSize) + nodeZ + 1
 end
 

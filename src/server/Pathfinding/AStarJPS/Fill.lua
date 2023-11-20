@@ -8,17 +8,45 @@ local CollisionGrid = require(script.Parent.Parent.CollisionGrid)
 local AJPS = {}
 
 local Diagonal = AJPSUtil.Heuristic.Diagonal
-local calF = AJPSUtil.calF
 local getG = AJPSUtil.getG
-local nextNode = AJPSUtil.nextNode
 local canWalk = AJPSUtil.canWalk
 local isGroupInRow = AJPSUtil.isGroupInRow
 local checkGroup = AJPSUtil.checkGroup
 local hasForcedNeighbors = AJPSUtil.hasForcedNeighbors
 local findNeighbors = AJPSUtil.findNeighbors
 
+local function getCoordsWithGroupIdAndColumn(rowSize: number, groupId: number, column: number, xMov: boolean): (number, number)
+	local x,z
+	if xMov then
+		z, x = CollisionGrid.GetCoords(rowSize, groupId, column)
+	else
+		x, z = CollisionGrid.GetCoords(rowSize, groupId, column)
+	end
+	return x,z
+end
 
-function AJPS.findJumpNode(self, node, dir): (number?, number?)
+local function fillNode(self, x, z): ()
+	local nodeId = NodeUtil.getNodeId(self.gridSize.X, x, z)
+	self.nodesReached[nodeId] = true
+end
+
+local function addNodes(self, _dir, collisionBit, startCol, rowSize, _groupId, xMov): ()
+	if _dir > 0 then
+		local stopBit = collisionBit and collisionBit - 1 or 31
+		for i = startCol, stopBit do
+			local x, z = getCoordsWithGroupIdAndColumn(rowSize, _groupId, i, xMov)
+			fillNode(self, x, z)
+		end
+	else
+		local stopBit = collisionBit and collisionBit + 1 or 0
+		for i = startCol, stopBit, -1 do
+			local x, z = getCoordsWithGroupIdAndColumn(rowSize, _groupId, i, xMov)
+			fillNode(self, x, z)
+		end
+	end
+end
+
+function AJPS.findJumpNode(self, node, dir, _g): (number?, number?)
 	if dir.X ~= 0 and dir.Y ~= 0 then
 		error("AJPS.findJumpNode() does not support Diagonal movement.")
 	end
@@ -33,8 +61,6 @@ function AJPS.findJumpNode(self, node, dir): (number?, number?)
 	local colSize = xMov and sz or sx
 	local row = xMov and z or x
 	local col = xMov and x or z
-	local goalGroupId = xMov and self.goalGroupIdZ or self.goalGroupIdX
-	local goalBit = xMov and self.goalBitZ or self.goalBitX
 	local startCol = col % 32
 
 	-- Return if at the end of the grid
@@ -64,13 +90,6 @@ function AJPS.findJumpNode(self, node, dir): (number?, number?)
 	while true do
 		-- Check if we can reach the goal
 		rcGroupId = _groupId
-		if _groupId == goalGroupId then
-			-- Check to make sure collision hasn't passed the goal
-			if CollisionGrid.CanReachBit(CollisionGrid.GetCollisionGroup(costs, _groupId), startCol, goalBit, _dir) then
-				r, c = row, goalBit
-				break
-			end
-		end
 
 		-- Check the upper group
 		if groupU then
@@ -114,6 +133,7 @@ function AJPS.findJumpNode(self, node, dir): (number?, number?)
 			end
 		end
 
+		addNodes(self, _dir, collisionBit, startCol, rowSize, _groupId, xMov)
 
 		if collisionBit then
 			return
@@ -138,32 +158,20 @@ function AJPS.findJumpNode(self, node, dir): (number?, number?)
 			groupD = costs[_groupIdD] or 0
 		end
 	end
+	
+	addNodes(self, _dir, collisionBit, startCol, rowSize, _groupId, xMov)
 
-	local x, z
-
-	if xMov then
-		z, x = CollisionGrid.GetCoords(rowSize, rcGroupId, c)
-	else
-		x, z = CollisionGrid.GetCoords(rowSize, rcGroupId, c)
-	end
-
-	return x, z
+	return getCoordsWithGroupIdAndColumn(rowSize, rcGroupId, c, xMov)
 end
 
 function AJPS.queueJumpNode(self, node, pNode, _g): Vector2?
-	if node == self.goal then
-		self.parents[node] = pNode
-		return node
-	end
+	fillNode(self, node.X, node.Y)
 
-	-- ignore node if not in grid
-	if not canWalk(self, node.X, node.Y) then
-		return
-	end
-	-- ignore node if in closed set
-	-- Must get the nodeId after checking if canWalk is true (z cannot be negative)
+
 	local nodeId = NodeUtil.getNodeId(self.gridSize.X, node.X, node.Y)
-	if self.closed[nodeId] then
+	-- ignore node if not in grid
+	-- ignore node if in closed set
+	if not canWalk(self, node.X, node.Y) or self.closed[nodeId] then
 		return
 	end
 	
@@ -171,29 +179,24 @@ function AJPS.queueJumpNode(self, node, pNode, _g): Vector2?
 	local g = _g + Diagonal(node, pNode)
 	if g < getG(self, nodeId) then
 		self.parents[node] = pNode
-		self.g[nodeId] = g
-		if self.f[nodeId] == nil then
-			self.f[nodeId] = calF(self, node)
+		if g < getG(self, nodeId) then
+			self.g[nodeId] = g
 		end
 		if not self.openDict[nodeId] then
 			self.openDict[nodeId] = true
-			self.open:Add(node, g + self.f[nodeId])
+			table.insert(self.open, node)
 		end
 	end
 	return
 end
 
-function AJPS.jump(self, node, pNode, _g): (Vector2?, number?)
-
+function AJPS.jump(self, node, pNode, _g): Vector2?
 	if not canWalk(self, node.X, node.Y) then
 		return
 	end
 	local nodeId = NodeUtil.getNodeId(self.gridSize.X, node.X, node.Y)
-	if node == self.goal then
-		self.parents[node] = pNode
-		self.g[nodeId] = _g + Diagonal(node, pNode)
-		return node
-	end
+	fillNode(self, node.X, node.Y)
+
 	if self.closed[nodeId] then
 		return
 	end
@@ -211,18 +214,12 @@ function AJPS.jump(self, node, pNode, _g): (Vector2?, number?)
 
 	local g = _g + Diagonal(node, pNode)
 	if dir.X ~= 0 and dir.Y ~= 0 then
-		local goalNode = AJPS.jump(self, node + Vector2.new(dir.X, 0), node, g)
-		if goalNode then
-			return goalNode
-		end
-		goalNode = AJPS.jump(self, node + Vector2.new(0, dir.Y), node, g)
-		if goalNode then
-			return goalNode
-		end
+		AJPS.jump(self, node + Vector2.new(dir.X, 0), node, g)
+		AJPS.jump(self, node + Vector2.new(0, dir.Y), node, g)
 		return AJPS.jump(self, node + dir, pNode, _g)
 	end
 
-	local jx, jz = AJPS.findJumpNode(self, node, dir)
+	local jx, jz = AJPS.findJumpNode(self, node, dir, g)
 	if jx then
 		pNode = node -- The parent node is now the previous diagonal node
 		local jNode = Vector2.new(jx, jz)
@@ -231,29 +228,34 @@ function AJPS.jump(self, node, pNode, _g): (Vector2?, number?)
 	return
 end
 
-function AJPS.findGoalJPS(self, pNode, pNodeId): Vector2?
+function AJPS.fill(self, pNode, pNodeId): Vector2?
 	while pNode do
 		local neighbors = findNeighbors(self, pNode, self.parents[pNode])
 		local _g = getG(self, pNodeId)
 
-		-- sort neighbors
-		table.sort(neighbors, function(a,b)
-			return Diagonal(a, self.goal) < Diagonal(b, self.goal)
-		end)
-		--
-
 		for i, node in ipairs(neighbors) do
-			local goalNode = AJPS.jump(self, node, pNode, _g)
-			if goalNode then
-				return goalNode
-			end
+			AJPS.jump(self, node, pNode, _g)
 		end
 
-		pNode, pNodeId = nextNode(self)
+		local node = table.remove(self.open, 1)
+		if not node then
+			return
+		end
+		local nodeId = NodeUtil.getNodeId(self.gridSize.X, node.X, node.Y)
+		pNode, pNodeId = node, nodeId
 	end
 	return
 end
 
+type ObstacleGridList = CollisionGrid.CollisionGridList
+type GoalData = {
+	goal: Vector2,
+	nodeId: number,
+	goalGroupIdX: number,
+	goalGroupIdZ: number,
+	goalBitX: number,
+	goalBitZ: number,
+}
 export type CollisionMap = CollisionGrid.CollisionMap
 export type Path = {Vector2}
 export type HeuristicName = "Chebyshev"
