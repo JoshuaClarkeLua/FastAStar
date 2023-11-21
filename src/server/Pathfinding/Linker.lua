@@ -329,6 +329,12 @@ function Linker.new()
 	return self
 end
 
+function Linker:Destroy(): ()
+	for map in pairs(self._maps) do
+		self:RemoveMap(map)
+	end
+end
+
 function Linker:AddMap(mapName: string, gridSize: Vector2, ...: CollisionMap): ()
 	if self._maps[mapName] then
 		error(`Map '{mapName}' already exists`)

@@ -119,7 +119,7 @@ function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2, handler: Para
 		queued = {} :: {[string]: ObjectData}, -- [id]: ObjectData
 		objects = {} :: {[string]: Object}, -- [id]: Object
 		--
-		_handler = handler,
+		_handler = _handler,
 		_job = _handler:NewJob('CollisionGrid'),
 		_origin = origin,
 		_gridSize = gridSize,
