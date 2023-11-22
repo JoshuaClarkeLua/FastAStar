@@ -16,6 +16,7 @@ export type ObjectData = {
 }
 export type ObjNodes = {number} -- {x, z, x, z, ...}
 export type CollisionMap = {
+	metadata: any,
 	[number]: {
 		OnChanged: RBXScriptSignal, -- (nodes: {Vector2}, added: boolean)
 		nodeMap: {[number]: number},
@@ -153,14 +154,22 @@ function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2, handler: Para
 			-- Remove object old nodes that are not in the new nodes
 			local oldNodes = object.nodes
 			if oldNodes ~= nil then
-				for mapName, type in pairs(object.maps) do
-					self:_RemoveMapNodes(oldNodes, mapName, type)
+				for mapName, data in pairs(object.maps) do
+					if data.invert then
+						self:_AddMapNodes(oldNodes, mapName, data.type)
+					else
+						self:_RemoveMapNodes(oldNodes, mapName, data.type)
+					end
 				end
 			end
 			-- Add new nodes
 			object.nodes = nodes
-			for mapName, type in pairs(object.maps) do
-				self:_AddMapNodes(nodes, mapName, type)
+			for mapName, data in pairs(object.maps) do
+				if data.invert then
+					self:_RemoveMapNodes(nodes, mapName, data.type)
+				else
+					self:_AddMapNodes(nodes, mapName, data.type)
+				end
 			end
 		end
 		--
@@ -184,11 +193,12 @@ function CollisionGrid:_GetQueued(amount: number): (...string & CFrame & Vector3
 	return id, data[1], data[2], self:_GetQueued(amount - 1)
 end
 
-function CollisionGrid:AddMap(map: string): ()
+function CollisionGrid:AddMap(map: string, collisionsByDefault: boolean?, metadata: any): ()
 	if self.maps[map] then
 		error(`Map '{map}' already exists`)
 	end
 	self.maps[map] = {
+		metadata = metadata,
 		[OBJ_TYPE.Collision] = {
 			OnChanged = Signal.new(),
 			nodeMap = {},
@@ -202,6 +212,18 @@ function CollisionGrid:AddMap(map: string): ()
 			nodesZ = {},
 		},
 	}
+	if collisionsByDefault == true then
+		local collisionMap = self.maps[map][OBJ_TYPE.Collision]
+		for i = 1, self._gridSize.X * self._gridSize.Y do
+			collisionMap.nodeMap[i] = 1
+		end
+		for i = 1, self._numGroupsX * self._gridSize.X do
+			collisionMap.nodesX[i] = Bit32Util.FILL_R[31]
+		end
+		for i = 1, self._numGroupsZ * self._gridSize.Y do
+			collisionMap.nodesZ[i] = Bit32Util.FILL_R[31]
+		end
+	end
 end
 
 function CollisionGrid:RemoveMap(map: string): ()
@@ -268,24 +290,22 @@ function CollisionGrid:_AddMapNodes(nodes: ObjNodes, mapName: string, type: Obje
 
 		if typeMap.nodeMap[nodeId] then
 			typeMap.nodeMap[nodeId] += 1
-		else
-			table.insert(changedNodes, Vector2.new(x, z))
 
+			if typeMap.nodeMap[nodeId] == 0 then
+				typeMap.nodeMap[nodeId] = nil
+			end
+		else
+			typeMap.nodeMap[nodeId] = 1
+			-- Add collision to nodes
+			table.insert(changedNodes, Vector2.new(x, z))
 			-- Update nodesX
 			local groupId = CollisionGrid.GetGroupId(self._gridSize.X, x, z)
 			local group = typeMap.nodesX[groupId] or default
 			typeMap.nodesX[groupId] = bit32.replace(group, bitSet, z % 32)
-
-			-- Update nodeMap
-			if group == typeMap.nodesX[groupId] then -- Only add to node map when the bit was already set before (there are more than 2 objects occupying the same node)
-				typeMap.nodeMap[nodeId] = 2 -- 2 because the first collision is already counted
-			--
 			-- Update nodesZ
-			else
-				groupId = CollisionGrid.GetGroupId(self._gridSize.Y, z, x)
-				group = typeMap.nodesZ[groupId] or default
-				typeMap.nodesZ[groupId] = bit32.replace(group, bitSet, x % 32)
-			end
+			groupId = CollisionGrid.GetGroupId(self._gridSize.Y, z, x)
+			group = typeMap.nodesZ[groupId] or default
+			typeMap.nodesZ[groupId] = bit32.replace(group, bitSet, x % 32)
 		end
 	end
 
@@ -313,27 +333,28 @@ function CollisionGrid:_RemoveMapNodes(nodes: ObjNodes, mapName: string, type: O
 
 		if typeMap.nodeMap[nodeId] then
 			typeMap.nodeMap[nodeId] -= 1
-			if typeMap.nodeMap[nodeId] < 2 then
+			-- Update nodes if no more collisions
+			if typeMap.nodeMap[nodeId] == 0 then
 				typeMap.nodeMap[nodeId] = nil
+				-- Update nodes
+				table.insert(changedNodes, Vector2.new(x, z))
+				-- Update nodesX
+				local groupId = CollisionGrid.GetGroupId(self._gridSize.X, x, z)
+				local group = typeMap.nodesX[groupId]
+				if group ~= nil then
+					local v = bit32.replace(group, bitUnset, z % 32)
+					typeMap.nodesX[groupId] = v ~= default and v or nil
+				end
+				-- Update nodesZ
+				groupId = CollisionGrid.GetGroupId(self._gridSize.Y, z, x)
+				group = typeMap.nodesZ[groupId]
+				if group ~= nil then
+					local v = bit32.replace(group, bitUnset, x % 32)
+					typeMap.nodesZ[groupId] = v ~= default and v or nil
+				end
 			end
 		else
-			table.insert(changedNodes, Vector2.new(x, z))
-
-			-- Update nodesX
-			local groupId = CollisionGrid.GetGroupId(self._gridSize.X, x, z)
-			local group = typeMap.nodesX[groupId]
-			if group ~= nil then
-				local v = bit32.replace(group, bitUnset, z % 32)
-				typeMap.nodesX[groupId] = v ~= default and v or nil
-			end
-
-			-- Update nodesZ
-			groupId = CollisionGrid.GetGroupId(self._gridSize.Y, z, x)
-			group = typeMap.nodesZ[groupId]
-			if group ~= nil then
-				local v = bit32.replace(group, bitUnset, x % 32)
-				typeMap.nodesZ[groupId] = v ~= default and v or nil
-			end
+			typeMap.nodeMap[nodeId] = -1
 		end
 	end
 
@@ -342,7 +363,7 @@ function CollisionGrid:_RemoveMapNodes(nodes: ObjNodes, mapName: string, type: O
 	end
 end
 
-function CollisionGrid:AddMapObject(id: string, map: string, type: ObjectTypeName): ()
+function CollisionGrid:AddMapObject(id: string, map: string, type: ObjectTypeName, invert: boolean?): ()
 	if not self.maps[map] then
 		error(`Invalid map '{map}'`)
 	end
@@ -354,19 +375,27 @@ function CollisionGrid:AddMapObject(id: string, map: string, type: ObjectTypeNam
 	if not newType then
 		error(`Invalid type '{type}'`)
 	end
-	local oldType = object.maps[map]
-	if oldType then
+	invert = invert or false
+	local oldMap = object.maps[map]
+	if oldMap then
 		-- Return if object was already added to map type
-		if oldType == newType then
+		if oldMap.type == newType and oldMap.invert == invert then
 			return
 		end
-		self:_RemoveMapNodes(object.nodes, map, oldType)
+		self:_RemoveMapNodes(object.nodes, map, oldMap.type, oldMap.invert)
 	end
 	-- Add object to map
-	object.maps[map] = newType
+	object.maps[map] = {
+		type = newType,
+		invert = invert,
+	}
 	-- Add nodes to map if nodes are already calculated
 	if object.nodes ~= nil then
-		self:_AddMapNodes(object.nodes, map, newType)
+		if invert then
+			self:_RemoveMapNodes(object.nodes, map, newType)
+		else
+			self:_AddMapNodes(object.nodes, map, newType)
+		end
 	end
 end
 
@@ -375,12 +404,16 @@ function CollisionGrid:RemoveMapObject(id: string, map: string): ()
 	if not object then
 		return
 	end
-	local currentType = object.maps[map]
-	if not currentType then
+	local data = object.maps[map]
+	if not data then
 		return
 	end
 	if object.nodes ~= nil then
-		self:_RemoveMapNodes(object.nodes, map, currentType)
+		if data.invert then
+			self:_AddMapNodes(object.nodes, map, data.type)
+		else
+			self:_RemoveMapNodes(object.nodes, map, data.type)
+		end
 	end
 	object.maps[map] = nil
 end
@@ -533,6 +566,10 @@ function CollisionGrid:GetMapPromise(mapName: string): Promise
 		return map
 	end)
 	return promise
+end
+
+function CollisionGrid:_GetMap(mapName: string): CollisionMap?
+	return self.maps[mapName]
 end
 
 function CollisionGrid:Destroy(): ()

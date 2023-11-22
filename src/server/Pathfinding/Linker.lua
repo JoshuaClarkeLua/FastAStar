@@ -476,6 +476,7 @@ do
 end
 
 function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?): ()
+	assert(cost, 'Cost must be a number')
 	fromPos = Vector2Util.floor(fromPos)
 	toPos = Vector2Util.floor(toPos)
 	toMap = toMap or fromMap
@@ -502,19 +503,6 @@ function Linker:RemoveLink(id: string): ()
 end
 
 function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?): (RoomLink?, {[RoomLink]: RoomLink}?)
-	fromPos = Vector2Util.floor(fromPos)
-	toPos = Vector2Util.floor(toPos)
-	if not toMap then
-		toMap = fromMap
-	end
-	local _fromMap = self:GetMap(fromMap)
-	local _toMap = self:GetMap(toMap)
-	if not GridUtil.isInGrid(_fromMap.gridSize.X, _fromMap.gridSize.Y, fromPos.X, fromPos.Y) then
-		return
-	end
-	if not GridUtil.isInGrid(_toMap.gridSize.X, _toMap.gridSize.Y, toPos.X, toPos.Y) then
-		return
-	end
 	--
 	local startLink = self:FindLinkFromPos(fromMap, fromPos) -- Triggers a map update
 	local goalLink = self:FindLinkFromPos(toMap, toPos)
@@ -738,7 +726,24 @@ end
 	@return (boolean, LinkPath) -- (isReachable, path)
 ]=]
 function Linker:FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?): (boolean, LinkPath)
-	toMap = toMap or fromMap
+	fromPos = Vector2Util.floor(fromPos)
+	toPos = Vector2Util.floor(toPos)
+	if not toMap then
+		toMap = fromMap
+	end
+	local _fromMap = self:GetMap(fromMap)
+	local _toMap = self:GetMap(toMap)
+	if not GridUtil.isInGrid(_fromMap.gridSize.X, _fromMap.gridSize.Y, fromPos.X, fromPos.Y) then
+		return false, {}
+	end
+	if not GridUtil.isInGrid(_toMap.gridSize.X, _toMap.gridSize.Y, toPos.X, toPos.Y) then
+		return false, {}
+	end
+	-- Check if one of the maps has no links
+	print(_fromMap.links, _toMap.links)
+	if next(_fromMap.links) == nil or next(_toMap.links) == nil then
+		return true, {} -- Return true because it may still have a path
+	end
 	-- Find all possible paths
 	local goalLink, parents = self:_FindLinkPath(fromPos, toPos, fromMap, toMap)
 	if not goalLink then

@@ -23,8 +23,8 @@ local Floor2GridSize = Vector2.new(Floor2.Size.X, Floor2.Size.Z)
 
 local Floor1Grid = CollisionGrid.newAsync(Floor1.CFrame, Floor1GridSize)
 local Floor2Grid = CollisionGrid.newAsync(Floor2.CFrame, Floor2GridSize)
-Floor1Grid:AddMap("Main", Floor1.CFrame, Floor1GridSize)
-Floor2Grid:AddMap("Main", Floor2.CFrame, Floor2GridSize)
+Floor1Grid:AddMap("Main")
+Floor2Grid:AddMap("Main")
 
 local Floor1Origin = Floor1Grid:GetOrigin()
 local Floor2Origin = Floor2Grid:GetOrigin()
@@ -143,7 +143,7 @@ local goal = workspace.GOAL
 -- 	folder.Parent = workspace
 -- end
 
-local function findLinkPath(): ()
+--[[ local function findLinkPath(): ()
 	local startPos = Floor1Origin:PointToObjectSpace(start.Position)
 	local goalPos = Floor2Origin:PointToObjectSpace(goal.Position)
 	startPos = Vector2.new(startPos.X, startPos.Z)
@@ -187,14 +187,14 @@ end
 
 start:GetPropertyChangedSignal("CFrame"):Connect(findLinkPath)
 goal:GetPropertyChangedSignal("CFrame"):Connect(findLinkPath)
-findLinkPath()
+findLinkPath() ]]
 
 local function doPath()
 	local s = os.clock()
-	local start = origin:PointToObjectSpace(workspace.START.CFrame.Position)
-	local goal = origin:PointToObjectSpace(workspace.GOAL.CFrame.Position)
-	local colX, colZ = CollisionGrid.combineMaps(mainMap)
-	local path = AStarJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, colX, colZ)
+	local start = Floor1Origin:PointToObjectSpace(workspace.START.CFrame.Position)
+	local goal = Floor1Origin:PointToObjectSpace(workspace.GOAL.CFrame.Position)
+	local colX, colZ = CollisionGrid.combineMaps(Floor1Map)
+	local path = AStarJPS.findPath(Floor1GridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, colX, colZ)
 	s = os.clock() - s
 	print(s)
 	workspace.PathfindingParts:Destroy()
@@ -204,7 +204,7 @@ local function doPath()
 		local lastP
 		for i = 1, #path do
 			local node = path[i]
-			local p = _doPart(origin:PointToWorldSpace(Vector3.new(node.X, bSize2.Y, node.Y)))
+			local p = _doPart(Floor1Origin:PointToWorldSpace(Vector3.new(node.X, Floor1Size2.Y, node.Y)))
 			p.Parent = folder
 			p.Color = Color3.new(1,0,0)
 			p.Transparency = .5
@@ -226,6 +226,6 @@ local function doPath()
 	folder.Parent = workspace
 end
 
--- workspace.START:GetPropertyChangedSignal("CFrame"):Connect(doPath)
--- workspace.GOAL:GetPropertyChangedSignal("CFrame"):Connect(doPath)
--- doPath()
+workspace.START:GetPropertyChangedSignal("CFrame"):Connect(doPath)
+workspace.GOAL:GetPropertyChangedSignal("CFrame"):Connect(doPath)
+doPath()
