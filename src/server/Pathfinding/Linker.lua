@@ -70,12 +70,14 @@ local function iterateLinks(firstLink: RoomLink, iterator: (link: RoomLink) -> (
 	end
 end
 
-local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, map: string, toMap: string): RoomLink
+local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, map: string, toMap: string, label: string?): RoomLink
 	local _map = linker:GetMap(map)
 	local self = {
 		id = id,
 		num = num,
 		cost = cost,
+		label = label,
+		--
 		pos = nodePos,
 		map = map,
 		nodeId = NodeUtil.getNodeId(_map.gridSize.X, nodePos.X, nodePos.Y),
@@ -433,7 +435,7 @@ do
 		_linkNum += 1
 		return _linkNum % 2
 	end
-	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromMap: string, toMap: string): RoomLink?
+	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromMap: string, toMap: string, label: string?): RoomLink?
 		local map = self:GetMap(fromMap)
 		if not map then
 			error(`Map '{fromMap}' does not exist`)
@@ -448,7 +450,7 @@ do
 		fromPos = Vector2Util.floor(fromPos)
 		-- Create link
 		local num = getLinkNum()
-		local link = newLink(self, id, num, cost, fromPos, fromMap, toMap)
+		local link = newLink(self, id, num, cost, fromPos, fromMap, toMap, label)
 		-- Find link group
 		local linkGroup: RoomLink = self:FindLinkFromPos(fromMap, fromPos)
 		-- Add link to link group
@@ -471,17 +473,18 @@ do
 	end
 end
 
-function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?): ()
+function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?, bidirectional: boolean?, label: string?): ()
 	assert(cost, 'Cost must be a number')
 	fromPos = Vector2Util.floor(fromPos)
 	toPos = Vector2Util.floor(toPos)
 	toMap = toMap or fromMap
+	bidirectional = bidirectional ~= false
 	--
-	local linkA = self:_AddLink(id, cost, fromPos, fromMap, toMap)
+	local linkA = self:_AddLink(id, cost, fromPos, fromMap, toMap, label)
 	if not linkA then
 		return
 	end
-	local linkB = self:_AddLink(id, cost, toPos, toMap, fromMap)
+	local linkB = self:_AddLink(id, bidirectional and cost or math.huge, toPos, toMap, fromMap, label)
 	if not linkB then
 		removeLink(self, linkA)
 		return
@@ -535,7 +538,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 	while #queue > 0 do
 		local groupLink = table.remove(queue, 1)
 		iterateLinks(groupLink, function(parentLink: RoomLink)
-			if closed[parentLink] then
+			if closed[parentLink] or parentLink.cost == math.huge then
 				return
 			end
 
@@ -762,10 +765,11 @@ function Linker:FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, 
 	return true, path
 end
 
-type RoomLink = {
+export type RoomLink = {
 	id: string,
 	num: number,
 	cost: number,
+	label: string?,
 	pos: Vector2,
 	nodeId: number,
 	map: string,
@@ -775,13 +779,6 @@ type RoomLink = {
 
 	-- caches
 	_linkCosts: {[RoomLink]: number},
-}
-type MapGroupLink = {
-	id: string,
-	fromPos: Vector2,
-	toPos: Vector2,
-	fromMap: string,
-	toMap: string,
 }
 type RoomLinkCollisionMap = {
 	gridSize: Vector2,

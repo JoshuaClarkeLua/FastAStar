@@ -3,7 +3,6 @@ local Imports = require(script.Parent.Imports)
 local ParallelJobHandler = require(ReplicatedStorage.Packages.ParallelJobHandler)
 local Promise = require(ReplicatedStorage.Packages.Promise)
 local Signal = require(ReplicatedStorage.Packages.Signal)
-local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
 local Vector2Util = Imports.Vector2Util
 local Vector3Util = Imports.Vector3Util
 local Bit32Util = require(script.Parent.Bit32Util)
