@@ -733,6 +733,12 @@ function Linker:FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, 
 	end
 	local _fromMap = self:GetMap(fromMap)
 	local _toMap = self:GetMap(toMap)
+	if not _fromMap then
+		error(`Map '{fromMap}' does not exist`)
+	end
+	if not _toMap then
+		error(`Map '{toMap}' does not exist`)
+	end
 	if not GridUtil.isInGrid(_fromMap.gridSize.X, _fromMap.gridSize.Y, fromPos.X, fromPos.Y) then
 		return false, {}
 	end
@@ -740,7 +746,6 @@ function Linker:FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, 
 		return false, {}
 	end
 	-- Check if one of the maps has no links
-	print(_fromMap.links, _toMap.links)
 	if next(_fromMap.links) == nil or next(_toMap.links) == nil then
 		return true, {} -- Return true because it may still have a path
 	end

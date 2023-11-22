@@ -54,6 +54,37 @@ local CollisionGrid = {}
 CollisionGrid.__index = CollisionGrid
 CollisionGrid.OBJECT_TYPE = OBJ_TYPE
 
+local function addMapObject(self, object, _map, type, invert): ()
+	-- Add object to map
+	object.maps[_map] = {
+		type = type,
+		invert = invert,
+	}
+	-- Add nodes to map if nodes are already calculated
+	if object.nodes ~= nil then
+		if invert then
+			self:_RemoveMapNodes(object.nodes, _map, type)
+		else
+			self:_AddMapNodes(object.nodes, _map, type)
+		end
+	end
+end
+
+local function removeMapObject(self, object, _map): ()
+	local data = object.maps[_map]
+	if not data then
+		return
+	end
+	if object.nodes ~= nil then
+		if data.invert then
+			self:_AddMapNodes(object.nodes, _map, data.type)
+		else
+			self:_RemoveMapNodes(object.nodes, _map, data.type)
+		end
+	end
+	object.maps[_map] = nil
+end
+
 function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	cf = origin:ToObjectSpace(cf)
 	local pos = cf.Position
@@ -154,22 +185,14 @@ function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2, handler: Para
 			-- Remove object old nodes that are not in the new nodes
 			local oldNodes = object.nodes
 			if oldNodes ~= nil then
-				for mapName, data in pairs(object.maps) do
-					if data.invert then
-						self:_AddMapNodes(oldNodes, mapName, data.type)
-					else
-						self:_RemoveMapNodes(oldNodes, mapName, data.type)
-					end
+				for mapName in pairs(object.maps) do
+					removeMapObject(self, object, mapName)
 				end
 			end
 			-- Add new nodes
 			object.nodes = nodes
 			for mapName, data in pairs(object.maps) do
-				if data.invert then
-					self:_RemoveMapNodes(nodes, mapName, data.type)
-				else
-					self:_AddMapNodes(nodes, mapName, data.type)
-				end
+				addMapObject(self, object, mapName, data.type, data.invert)
 			end
 		end
 		--
@@ -261,8 +284,8 @@ function CollisionGrid:RemoveObject(id: string): ()
 	if object.nodes == nil then
 		self.queued[id] = nil
 	else
-		for map, objType in pairs(object.maps) do
-			self:_RemoveMapNodes(object.nodes, map, objType)
+		for map, data in pairs(object.maps) do
+			removeMapObject(self, object, map)
 		end
 	end
 end
@@ -382,21 +405,10 @@ function CollisionGrid:AddMapObject(id: string, map: string, type: ObjectTypeNam
 		if oldMap.type == newType and oldMap.invert == invert then
 			return
 		end
-		self:_RemoveMapNodes(object.nodes, map, oldMap.type, oldMap.invert)
+		removeMapObject(self, object, map)
 	end
 	-- Add object to map
-	object.maps[map] = {
-		type = newType,
-		invert = invert,
-	}
-	-- Add nodes to map if nodes are already calculated
-	if object.nodes ~= nil then
-		if invert then
-			self:_RemoveMapNodes(object.nodes, map, newType)
-		else
-			self:_AddMapNodes(object.nodes, map, newType)
-		end
-	end
+	addMapObject(self, object, map, newType, invert)
 end
 
 function CollisionGrid:RemoveMapObject(id: string, map: string): ()
@@ -409,11 +421,7 @@ function CollisionGrid:RemoveMapObject(id: string, map: string): ()
 		return
 	end
 	if object.nodes ~= nil then
-		if data.invert then
-			self:_AddMapNodes(object.nodes, map, data.type)
-		else
-			self:_RemoveMapNodes(object.nodes, map, data.type)
-		end
+		removeMapObject(self, object, map)
 	end
 	object.maps[map] = nil
 end
@@ -547,7 +555,7 @@ function CollisionGrid:GetMapPromise(mapName: string): Promise
 		return
 	end
 	if not self._job.Running then
-		return Promise.resolve(self.obsNodes)
+		return Promise.resolve(self.maps[mapName])
 	end
 	local promise = Promise.fromEvent(self._job.OnFinished):andThen(function()
 		if not self._job.Active then
