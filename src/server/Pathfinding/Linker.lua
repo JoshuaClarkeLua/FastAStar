@@ -382,10 +382,6 @@ end
 function Linker:RemoveMap(map: string): ()
 	local _map = self._maps[map]
 	self._maps[map] = nil
-	-- Stop map update thread
-	if _map._updateScheduled then
-		coroutine.close(_map._updateScheduled)
-	end
 	-- Disconnect connections
 	for _, conn in ipairs(_map._connections) do
 		conn:Disconnect()
