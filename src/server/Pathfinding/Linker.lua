@@ -6,7 +6,6 @@ local Imports = require(script.Parent.Imports)
 local NodeUtil = require(script.Parent.NodeUtil)
 local Vector2Util = Imports.Vector2Util
 
-type CollisionGridList = CollisionGrid.CollisionGridList
 type CollisionMap = CollisionGrid.CollisionMap
 
 local function getLinkKeys(id: string): {string}
@@ -337,7 +336,7 @@ function Linker:Destroy(): ()
 	end
 end
 
-function Linker:AddMap(mapName: string, gridSize: Vector2, ...: CollisionMap): ()
+function Linker:AddMap(mapName: string, gridSize: Vector2, metadata: {[any]: any}?, ...: CollisionMap): ()
 	if self._maps[mapName] then
 		error(`Map '{mapName}' already exists`)
 	end
@@ -360,6 +359,7 @@ function Linker:AddMap(mapName: string, gridSize: Vector2, ...: CollisionMap): (
 		nodesZ = nodesZ,
 		links = {}, -- {[string]: RoomLink}
 		linksByNodeId = {}, -- {[nodeId]: {[string]: true}}
+		metadata = metadata,
 		_groupChangesX = {}, -- Keeps track of the groups that changed due to added or removed collisions
 		_groupChangesZ = {}, -- Keeps track of the groups that changed due to added or removed collisions
 		_connections = connections,
@@ -402,7 +402,7 @@ function Linker:RemoveMap(map: string): ()
 	end
 end
 
-function Linker:GetMap(map: string): CollisionGridList?
+function Linker:GetMap(map: string): RoomLinkCollisionMap?
 	return self._maps[map]
 end
 
@@ -787,6 +787,7 @@ type RoomLinkCollisionMap = {
 	nodesZ: {number},
 	links: {[string]: RoomLink},
 	linksByNodeId: {[number]: {[string]: true}},
+	metadata: {[any]: any},
 	_groupChangesX: {[number]: number},
 	_groupChangesZ: {[number]: number},
 	_connections: {RBXScriptConnection},
