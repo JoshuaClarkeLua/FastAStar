@@ -336,13 +336,13 @@ function Linker:Destroy(): ()
 	end
 end
 
-function Linker:AddMap(mapName: string, gridSize: Vector2, metadata: any, ...: CollisionMap): ()
+function Linker:AddMap(mapName: string, gridSize: Vector2, mainMap: CollisionMap, ...: CollisionMap): ()
 	if self._maps[mapName] then
 		error(`Map '{mapName}' already exists`)
 	end
-	local nodesX, nodesZ = CollisionGrid.combineMaps(...)
+	local nodesX, nodesZ = CollisionGrid.combineMaps(mainMap, ...)
 	local connections = {}
-	local maps = {...}
+	local maps = {mainMap, ...}
 	if #maps == 0 then
 		error('No maps')
 	else
@@ -359,7 +359,7 @@ function Linker:AddMap(mapName: string, gridSize: Vector2, metadata: any, ...: C
 		nodesZ = nodesZ,
 		links = {}, -- {[string]: RoomLink}
 		linksByNodeId = {}, -- {[nodeId]: {[string]: true}}
-		metadata = metadata,
+		metadata = mainMap.metadata,
 		_groupChangesX = {}, -- Keeps track of the groups that changed due to added or removed collisions
 		_groupChangesZ = {}, -- Keeps track of the groups that changed due to added or removed collisions
 		_connections = connections,
