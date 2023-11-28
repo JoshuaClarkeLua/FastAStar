@@ -336,7 +336,7 @@ function Linker:Destroy(): ()
 	end
 end
 
-function Linker:AddMap(mapName: string, gridSize: Vector2, metadata: {[any]: any}?, ...: CollisionMap): ()
+function Linker:AddMap(mapName: string, gridSize: Vector2, metadata: any, ...: CollisionMap): ()
 	if self._maps[mapName] then
 		error(`Map '{mapName}' already exists`)
 	end
@@ -787,7 +787,7 @@ type RoomLinkCollisionMap = {
 	nodesZ: {number},
 	links: {[string]: RoomLink},
 	linksByNodeId: {[number]: {[string]: true}},
-	metadata: {[any]: any},
+	metadata: any,
 	_groupChangesX: {[number]: number},
 	_groupChangesZ: {[number]: number},
 	_connections: {RBXScriptConnection},
