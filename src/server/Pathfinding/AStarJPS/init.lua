@@ -19,6 +19,36 @@ local function reconstructPath(self, cNode): ()
 	end
 end
 
+local function plotLine(x0, y0, x1, y1)
+	x0 = math.floor(x0)
+	y0 = math.floor(y0)
+	x1 = math.floor(x1)
+	y1 = math.floor(y1)
+	local dx = math.abs(x1 - x0)
+	local dy = -math.abs(y1 - y0)
+	local sx = x0 < x1 and 1 or -1
+	local sy = y0 < y1 and 1 or -1
+	local err = dx + dy
+
+	local points = {}
+	while true do
+		table.insert(points, Vector2.new(x0, y0))
+		if x0 == x1 and y0 == y1 then break end
+		local e2 = err * 2
+		if e2 >= dy then
+			if x0 == x1 then break end
+			err = err + dy
+			x0 = x0 + sx
+		end
+		if e2 <= dx then
+			if y0 == y1 then break end
+			err = err + dx
+			y0 = y0 + sy
+		end
+	end
+	return points
+end
+
 function AJPS._setup(
 	gridSize: Vector2,
 	start: Vector2,
@@ -198,6 +228,49 @@ function AJPS.fill(
 	-- Find Goals
 	Fill.fill(self, self.start, self.startNodeId)
 	return self
+end
+
+function AJPS.reconstructPath(path: {Vector2}, noDiagonal: boolean?, diagonalPadding: boolean?): {Vector2}
+	local newPath = {}
+	if #path < 2 then
+		return newPath
+	end
+	-- Remove the goal node if it's the same as the node before the goal
+	-- (The findPath function adds the exact goal position to the path without the coordinates being integers)
+	local goalNode: Vector2?
+	if Vector2Util.round(path[1]) == path[2] then
+		goalNode = table.remove(path, 1)
+	end
+	for i, node in ipairs(path) do
+		local next = path[i+1]
+		if not next then
+			break
+		end
+		local points = plotLine(node.X, node.Y, next.X, next.Y)
+		table.move(points, 1, #points, math.max(#newPath,1), newPath)
+	end
+	-- Add nodes to make the path not have any diagonal nodes
+	if noDiagonal or diagonalPadding then
+		local i = 1
+		while i < #newPath do
+			local node = newPath[i]
+			i += 1
+			local next = newPath[i]
+			if node.X ~= next.X and node.Y ~= next.Y then
+				local x, y = next.X, node.Y
+				table.insert(newPath, i, Vector2.new(x, y))
+				if diagonalPadding then
+					i += 1
+					x, y = node.X, next.Y
+					table.insert(newPath, i, Vector2.new(x, y))
+				end
+			end
+		end
+	end
+	if goalNode then
+		table.insert(newPath, 1, goalNode)
+	end
+	return newPath
 end
 
 export type CollisionMap = CollisionGrid.CollisionMap

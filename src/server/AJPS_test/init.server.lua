@@ -23,7 +23,7 @@ local CollisionGrid = require(ServerScriptService.Server.Pathfinding.CollisionGr
 	00110000
 ]]
 
-local base = workspace.Baseplate
+local base = workspace.Floor1
 local bSize = base.Size
 local bSize2 = bSize/2
 local origin = base.CFrame
@@ -91,6 +91,7 @@ local function doPath()
 	local goal = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.GOAL.CFrame.Position)
 	local colX, colZ = CollisionGrid.combineMaps(mainMap)
 	local path = AJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, colX, colZ)
+	local _path = AJPS.reconstructPath(path, true, true)
 	s = os.clock() - s
 	print(s)
 	workspace.Parts:Destroy()
@@ -98,15 +99,16 @@ local function doPath()
 	folder.Name = 'Parts'
 	if #path > 2 then
 		local lastP
-		for i = 1, #path do
-			local node = path[i]
+		--[[ for i = 1, #_path do
+			local node = _path[i]
 			local p = _doPart((origin * CFrame.new(-bSize2.X, bSize2.Y, -bSize2.Z)):PointToWorldSpace(Vector3.new(node.X, 0, node.Y)))
 			p.Parent = folder
-			p.Color = Color3.new(1,0,0)
+			p.Name = i
+			p.Color = Color3.new(0,0,1)
 			p.Transparency = .5
 			local beam = Instance.new("Beam")
 			beam.FaceCamera = true
-			beam.Color = ColorSequence.new(Color3.new(1,0,0))
+			beam.Color = ColorSequence.new(Color3.new(0,0,1))
 			local a1 = Instance.new("Attachment")
 			a1.Parent = p
 			beam.Attachment0 = a1
@@ -117,7 +119,14 @@ local function doPath()
 				lastP.Beam.Attachment1 = a2
 			end
 			lastP = p
-		end
+		end ]]
+		--[[ for i = 1, #_path do
+			local node = _path[i]
+			local p = _doPart((origin * CFrame.new(-bSize2.X, bSize2.Y, -bSize2.Z)):PointToWorldSpace(Vector3.new(node.X, 0, node.Y)))
+			p.Parent = folder
+			p.Color = Color3.new(1,0,0)
+			p.Transparency = .5
+		end ]]
 	end
 	folder.Parent = workspace
 end
