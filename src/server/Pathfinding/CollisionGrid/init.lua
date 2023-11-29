@@ -574,6 +574,9 @@ function CollisionGrid:HasPos3D(pos: Vector3): boolean
 	return GridUtil.isInGrid(gridSize.X, gridSize.Y, pos.X, pos.Z)
 end
 
+function CollisionGrid.GetPosFromNodeId(gridSize: Vector2, nodeId: number): (number, number)
+	return NodeUtil.getPosFromId(gridSize.X, nodeId)
+end
 
 function CollisionGrid.GetGroupId(rowSize: number, row: number, col: number): number
 	local numGroups = math.ceil((rowSize + 1) / 32)
