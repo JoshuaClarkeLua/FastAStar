@@ -1,3 +1,4 @@
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Imports = require(script.Parent.Imports)
 local ParallelJobHandler = require(ReplicatedStorage.Packages.ParallelJobHandler)
@@ -6,31 +7,34 @@ local Signal = require(ReplicatedStorage.Packages.Signal)
 local Vector2Util = Imports.Vector2Util
 local Vector3Util = Imports.Vector3Util
 local Bit32Util = require(script.Parent.Bit32Util)
+local GridUtil = require(script.Parent.GridUtil)
 local NodeUtil = require(script.Parent.NodeUtil)
 
 type JobHandler = ParallelJobHandler.JobHandler
 export type ObjectData = {
 	cf: CFrame,
-	size: Vector3,	
+	size: Vector3,
 }
-export type ObjNodes = {number} -- {x, z, x, z, ...}
+export type ObjNodes = { number } -- {x, z, x, z, ...}
 export type CollisionMap = {
+	Name: string,
+	Grid: CollisionGrid,
 	metadata: any,
 	[number]: {
 		OnChanged: RBXScriptSignal, -- (nodes: {Vector2}, added: boolean)
-		nodeMap: {[number]: number},
-		nodesX: {[number]: number},
-		nodesZ: {[number]: number},
+		nodeMap: { [number]: number },
+		nodesX: { [number]: number },
+		nodesZ: { [number]: number },
 	},
 }
 type Object = {
 	nodes: ObjNodes,
-	maps: {[string]: any}, -- [MapName]: any
+	maps: { [string]: any }, -- [MapName]: any
 }
 export type ObjectType = number
-export type ObjectTypeName = 'Collision' | 'Negation'
+export type ObjectTypeName = "Collision" | "Negation"
 
-local XZ = Vector3.new(1,0,1)
+local XZ = Vector3.new(1, 0, 1)
 
 local OBJ_TYPE = {
 	Collision = 1,
@@ -88,7 +92,7 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	cf = origin:ToObjectSpace(cf)
 	local pos = cf.Position
 	local pos2d = Vector2.new(pos.X, pos.Z)
-	local size2 = size/2
+	local size2 = size / 2
 	-- Determine which axis is longer (for width and length)
 	local lenV: Vector3, widV: Vector3
 	if size.Z >= size.X then
@@ -101,7 +105,7 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	--
 	local line = cf:VectorToWorldSpace(size * lenV) * XZ
 	local line2d = Vector2.new(line.X, line.Z)
-	local lineMag2 = line2d.Magnitude/2
+	local lineMag2 = line2d.Magnitude / 2
 	-- Calculate the square's opposite corners which fit the line
 	local rsize2 = cf:VectorToWorldSpace(size2) * XZ
 	local nrsize2 = cf:VectorToWorldSpace(Vector3.new(-size2.X, 0, size2.Z))
@@ -109,9 +113,11 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	local p2 = -rsize2
 	local p3 = nrsize2
 	local p4 = -nrsize2
-	local min: Vector2 = Vector2Util.floor(pos2d + Vector2.new(math.min(p1.X, p2.X, p3.X, p4.X), math.min(p1.Z, p2.Z, p3.Z, p4.Z)))
-	local max: Vector2 = Vector2Util.ceil(pos2d + Vector2.new(math.max(p1.X, p2.X, p3.X, p4.X), math.max(p1.Z, p2.Z, p3.Z, p4.Z)))
-	
+	local min: Vector2 =
+		Vector2Util.floor(pos2d + Vector2.new(math.min(p1.X, p2.X, p3.X, p4.X), math.min(p1.Z, p2.Z, p3.Z, p4.Z)))
+	local max: Vector2 =
+		Vector2Util.ceil(pos2d + Vector2.new(math.max(p1.X, p2.X, p3.X, p4.X), math.max(p1.Z, p2.Z, p3.Z, p4.Z)))
+
 	local nodes = {} -- {x,z, x,z, ...}
 	for x = min.X, max.X do
 		if x < 0 or x > gridSize.X then
@@ -121,14 +127,14 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 			if z < 0 or z > gridSize.Y then
 				continue
 			end
-			local cellPos = Vector2.new(x,z) - pos2d
+			local cellPos = Vector2.new(x, z) - pos2d
 			local v2 = Vector3Util.project(cellPos, line2d)
-	
+
 			-- Check if cell is past the line (vertical check)
-			if math.ceil(lineMag2 - v2.Magnitude + .5) >= 0 then
+			if math.ceil(lineMag2 - v2.Magnitude + 0.5) >= 0 then
 				-- Check if cell is too far from the line (horizontal check)
 				local dist = (v2 - cellPos).Magnitude
-				if math.floor(dist - .5) <= (widV * size2).Magnitude then
+				if math.floor(dist - 0.5) <= (widV * size2).Magnitude then
 					table.insert(nodes, x)
 					table.insert(nodes, z)
 				end
@@ -139,30 +145,41 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	return nodes
 end
 
-function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2, handler: ParallelJobHandler.JobHandler?): CollisionGrid
-	origin = origin * CFrame.new(-gridSize.X/2, 0, -gridSize.Y/2)
+function CollisionGrid.newAsync(
+	origin: CFrame,
+	gridSize: Vector2,
+	handler: ParallelJobHandler.JobHandler?
+): CollisionGrid
+	origin = origin * CFrame.new(-gridSize.X / 2, 0, -gridSize.Y / 2)
 	local _handler = handler or ParallelJobHandler.new(script.Handler, 64, false)
 	if not _handler.IsReady then
 		_handler.OnReady:Wait()
 	end
 	local self = setmetatable({
-		maps = {} :: {[string]: CollisionMap}, -- [mapName]: CollisionMap
-		queued = {} :: {[string]: ObjectData}, -- [id]: ObjectData
-		objects = {} :: {[string]: Object}, -- [id]: Object
+		Id = HttpService:GenerateGUID(false),
+		maps = {} :: { [string]: CollisionMap }, -- [mapName]: CollisionMap
+		queued = {} :: { [string]: ObjectData }, -- [id]: ObjectData
+		objects = {} :: { [string]: Object }, -- [id]: Object
+		--
+		_OnResume = Signal.new(),
 		--
 		_handler = _handler,
-		_job = _handler:NewJob('CollisionGrid'),
+		_job = _handler:NewJob("CollisionGrid"),
+		_paused = 0, -- Keeps track of times PauseAsync is called
 		_origin = origin,
 		_gridSize = gridSize,
-		_numGroupsX = math.ceil(gridSize.X/32),
-		_numGroupsZ = math.ceil(gridSize.Y/32),
+		_numGroupsX = math.ceil(gridSize.X / 32),
+		_numGroupsZ = math.ceil(gridSize.Y / 32),
 	}, CollisionGrid)
 	-- Setup job
 	local job = self._job
-	job:SetSharedTable("Data", SharedTable.new({
-		origin = origin,
-		gridSize = gridSize,
-	}))
+	job:SetSharedTable(
+		"Data",
+		SharedTable.new({
+			origin = origin,
+			gridSize = gridSize,
+		})
+	)
 
 	-- Setup Job functions
 	local function GetNodesInBox(actor): ()
@@ -203,7 +220,51 @@ function CollisionGrid.newAsync(origin: CFrame, gridSize: Vector2, handler: Para
 	return self
 end
 
-function CollisionGrid:_GetQueued(amount: number): (...string & CFrame & Vector3)
+function CollisionGrid:Destroy(): ()
+	(self._job :: ParallelJobHandler.Job):SetSharedTable("Data", nil)
+	self._handler:Remove(self._job)
+	self._handler:Destroy()
+	self._OnResume:Fire()
+	self._OnResume:Destroy()
+end
+
+function CollisionGrid:PauseAsync(): ()
+	self._paused += 1
+	if self._job.Running then
+		self._job.OnFinished:Wait()
+		if not self._job.Active then
+			return
+		end
+	end
+end
+
+function CollisionGrid:ResumeAsync(_notDecreasePause: boolean?): ()
+	local fireResume = false
+	if self._paused > 0 then
+		if _notDecreasePause ~= true then
+			self._paused -= 1
+		end
+		if self._paused == 0 then
+			fireResume = true
+		else
+			self._OnResume:Wait()
+		end
+	end
+	if next(self.queued) ~= nil then
+		self._job:Run(self._GetNodesInBox)
+	end
+	if fireResume then
+		self._OnResume:Fire()
+	end
+end
+
+function CollisionGrid:WaitForResume(): ()
+	if self._paused > 0 then
+		self._OnResume:Wait()
+	end
+end
+
+function CollisionGrid:_GetQueued(amount: number): ...string & CFrame & Vector3
 	if amount == 0 then
 		return
 	end
@@ -220,6 +281,8 @@ function CollisionGrid:AddMap(map: string, collisionsByDefault: boolean?, metada
 		error(`Map '{map}' already exists`)
 	end
 	self.maps[map] = {
+		Name = map,
+		Grid = self,
 		metadata = metadata,
 		[OBJ_TYPE.Collision] = {
 			OnChanged = Signal.new(),
@@ -262,16 +325,15 @@ function CollisionGrid:HasMap(map: string): boolean
 	return self.maps[map] ~= nil
 end
 
-function CollisionGrid:SetObject(id: string, cf: CFrame, size: Vector3): ()
+function CollisionGrid:SetObjectAsync(id: string, cf: CFrame, size: Vector3): ()
 	-- Create object table if it does not exist
 	if not self.objects[id] then
 		self.objects[id] = {
 			maps = {},
 		}
 	end
-	self.queued[id] = {cf, size}
-	-- Run job
-	self._job:Run(self._GetNodesInBox)
+	self.queued[id] = { cf, size }
+	self:ResumeAsync(true)
 end
 
 function CollisionGrid:RemoveObject(id: string): ()
@@ -304,7 +366,7 @@ function CollisionGrid:_AddMapNodes(nodes: ObjNodes, mapName: string, type: Obje
 	local default = MAP_DEFAULTS[type]
 	local bitSet = MAP_BIT_SET[type]
 	-- Add nodes
-	local changedNodes = {} :: {Vector2}
+	local changedNodes = {} :: { Vector2 }
 	for i = 1, #nodes, 2 do
 		local x = nodes[i]
 		local z = nodes[i + 1]
@@ -347,7 +409,7 @@ function CollisionGrid:_RemoveMapNodes(nodes: ObjNodes, mapName: string, type: O
 	local default = MAP_DEFAULTS[type]
 	local bitUnset = MAP_BIT_UNSET[type]
 	-- Remove nodes
-	local changedNodes = {} :: {Vector2}
+	local changedNodes = {} :: { Vector2 }
 	for i = 1, #nodes, 2 do
 		local x = nodes[i]
 		local z = nodes[i + 1]
@@ -433,12 +495,57 @@ function CollisionGrid:GetObjectType(id: string, map: string): ObjectTypeName?
 	local type = object.maps[map]
 	if type then
 		if type == OBJ_TYPE.Collision then
-			return 'Collision'
+			return "Collision"
 		elseif type == OBJ_TYPE.Negation then
-			return 'Negation'
+			return "Negation"
 		end
 	end
 	return
+end
+
+function CollisionGrid:GetMapAsync(mapName: string): CollisionMap?
+	if not self.maps[mapName] then
+		return
+	end
+	if self._job.Running then
+		self._job.OnFinished:Wait()
+		if not self._job.Active then
+			return
+		end
+	end
+	return self.maps[mapName]
+end
+
+function CollisionGrid:GetMapPromise(mapName: string): Promise
+	if not self.maps[mapName] then
+		return
+	end
+	if not self._job.Running then
+		return Promise.resolve(self.maps[mapName])
+	end
+	local promise = Promise.fromEvent(self._job.OnFinished)
+		:andThen(function()
+			if not self._job.Active then
+				local p = Promise.new()
+				p:cancel()
+				return p
+			end
+			return
+		end)
+		:andThen(function()
+			local map = self.maps[mapName]
+			if not map then
+				local p = Promise.new()
+				p:cancel()
+				return p
+			end
+			return map
+		end)
+	return promise
+end
+
+function CollisionGrid:GetMap(mapName: string): CollisionMap?
+	return self.maps[mapName]
 end
 
 function CollisionGrid:GetSize(): Vector2
@@ -449,9 +556,25 @@ function CollisionGrid:GetOrigin(): CFrame
 	return self._origin
 end
 
+function CollisionGrid:ToGridSpace(pos: Vector3): Vector3
+	return self:GetOrigin():PointToObjectSpace(pos)
+end
+
+function CollisionGrid:ToWorldSpace(pos: Vector3): Vector3
+	return self:GetOrigin():PointToWorldSpace(pos)
+end
+
+function CollisionGrid:HasPos3D(pos: Vector3): boolean
+	local gridSize = self:GetSize()
+	-- convert pos to grid space
+	local _pos = self:ToGridSpace(pos)
+	return GridUtil.isInGrid(gridSize.X, gridSize.Y, pos.X, pos.Z)
+end
+
+
 function CollisionGrid.GetGroupId(rowSize: number, row: number, col: number): number
-	local numGroups = math.ceil((rowSize + 1)/32)
-	return (row * numGroups) + math.ceil((col + 1)/32)
+	local numGroups = math.ceil((rowSize + 1) / 32)
+	return (row * numGroups) + math.ceil((col + 1) / 32)
 end
 
 function CollisionGrid.HasCollision(grid: CollisionGridList, gridSize: number, row: number, col: number): number
@@ -509,11 +632,17 @@ end
 	
 	@return (number, number, number) -- First group in the row adjusted for the startCol and (first + dir) and last group id of the row starting at startCol in direction dir
 ]=]
-function CollisionGrid.GetRowFromStartCol(grid: CollisionGridList, rowSize: number, row: number, startCol: number, dir: number): (number?, number?, number?)
-	local numGroups = math.ceil((rowSize + 1)/32)
+function CollisionGrid.GetRowFromStartCol(
+	grid: CollisionGridList,
+	rowSize: number,
+	row: number,
+	startCol: number,
+	dir: number
+): (number?, number?, number?)
+	local numGroups = math.ceil((rowSize + 1) / 32)
 	local firstGroupId = CollisionGrid.GetGroupId(rowSize, row, startCol)
 	local col = startCol % 32
-	
+
 	local firstGroup = grid[firstGroupId] or 0
 	if firstGroup ~= 0 then
 		firstGroup = CollisionGrid.GetBitsInFront(firstGroup, col, dir)
@@ -525,70 +654,25 @@ function CollisionGrid.GetRowFromStartCol(grid: CollisionGridList, rowSize: numb
 	elseif dir < 0 then
 		lastGroupId = row * numGroups + 1 -- Start group id
 	end
-	
+
 	return firstGroup, firstGroupId, lastGroupId
 end
 
 function CollisionGrid.GetCoords(rowSize: number, groupId: number, col: number): (number, number)
-	local numGroups = math.ceil((rowSize + 1)/32)
+	local numGroups = math.ceil((rowSize + 1) / 32)
 	local x = math.floor((groupId - 1) / numGroups)
 	local z = ((groupId - 1) % numGroups) * 32 + col
 	return x, z
 end
 
-function CollisionGrid:GetMapAsync(mapName: string): CollisionMap?
-	if not self.maps[mapName] then
-		return
-	end
-	if self._job.Running then
-		self._job.OnFinished:Wait()
-		if not self._job.Active then
-			return
-		end
-	end
-	return self.maps[mapName]
-end
-
-function CollisionGrid:GetMapPromise(mapName: string): Promise
-	if not self.maps[mapName] then
-		return
-	end
-	if not self._job.Running then
-		return Promise.resolve(self.maps[mapName])
-	end
-	local promise = Promise.fromEvent(self._job.OnFinished):andThen(function()
-		if not self._job.Active then
-			local p = Promise.new()
-			p:cancel()
-			return p
-		end
-		return
-	end):andThen(function()
-		local map = self.maps[mapName]
-		if not map then
-			local p = Promise.new()
-			p:cancel()
-			return p
-		end
-		return map
-	end)
-	return promise
-end
-
-function CollisionGrid:_GetMap(mapName: string): CollisionMap?
-	return self.maps[mapName]
-end
-
-function CollisionGrid:Destroy(): ()
-	(self._job :: ParallelJobHandler.Job):SetSharedTable("Data", nil)
-	self._handler:Remove(self._job)
-	self._handler:Destroy()
-end
-
-function CollisionGrid.iterX(gridSize: Vector2, obstaclesX: CollisionGridList, iterator: (x: number, z: number) -> ()): ()
-	local numGroups = math.ceil((gridSize.X + 1)/32)
+function CollisionGrid.iterX(
+	gridSize: Vector2,
+	obstaclesX: CollisionGridList,
+	iterator: (x: number, z: number) -> ()
+): ()
+	local numGroups = math.ceil((gridSize.X + 1) / 32)
 	for groupId, group in obstaclesX do
-		local x = math.ceil(groupId/numGroups) - 1
+		local x = math.ceil(groupId / numGroups) - 1
 		local z = ((groupId - 1) % numGroups) * 32
 		for i = 0, 31 do
 			local val = bit32.extract(group, i)
@@ -599,10 +683,14 @@ function CollisionGrid.iterX(gridSize: Vector2, obstaclesX: CollisionGridList, i
 	end
 end
 
-function CollisionGrid.iterZ(gridSize: Vector2, obstaclesZ: CollisionGridList, iterator: (x: number, z: number) -> ()): ()
-	local numGroups = math.ceil((gridSize.Y + 1)/32)
+function CollisionGrid.iterZ(
+	gridSize: Vector2,
+	obstaclesZ: CollisionGridList,
+	iterator: (x: number, z: number) -> ()
+): ()
+	local numGroups = math.ceil((gridSize.Y + 1) / 32)
 	for groupId, group in obstaclesZ do
-		local z = math.ceil(groupId/numGroups) - 1
+		local z = math.ceil(groupId / numGroups) - 1
 		local x = ((groupId - 1) % numGroups) * 32
 		for i = 0, 31 do
 			local val = bit32.extract(group, i)
@@ -613,7 +701,11 @@ function CollisionGrid.iterZ(gridSize: Vector2, obstaclesZ: CollisionGridList, i
 	end
 end
 
-function CollisionGrid.concat(fn: (new: number, old: number) -> number, default: number, ...: CollisionGridList): CollisionGridList
+function CollisionGrid.concat(
+	fn: (new: number, old: number) -> number,
+	default: number,
+	...: CollisionGridList
+): CollisionGridList
 	local newList = ... -- sets newList as first list in ...
 	if newList == nil then
 		return {}
@@ -663,7 +755,7 @@ function CollisionGrid.combineMaps(...: CollisionMap): (CollisionGridList, Colli
 	return collisionsX or {}, collisionsZ or {}
 end
 
-function CollisionGrid.combineGroups(groupsX: {[number]: any}, groupsZ: {[number]: any}, ...: CollisionMap): ()
+function CollisionGrid.combineGroups(groupsX: { [number]: any }, groupsZ: { [number]: any }, ...: CollisionMap): ()
 	local colX = {}
 	local colZ = {}
 	local negX = {}
@@ -710,6 +802,6 @@ function CollisionGrid.combineGroups(groupsX: {[number]: any}, groupsZ: {[number
 end
 
 export type CollisionGrid = typeof(CollisionGrid.newAsync(...))
-export type CollisionGridList = {[number]: number}
+export type CollisionGridList = { [number]: number }
 type Promise = typeof(Promise.new(...))
 return CollisionGrid

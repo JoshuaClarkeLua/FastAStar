@@ -7,6 +7,7 @@ local NodeUtil = require(script.Parent.NodeUtil)
 local Vector2Util = Imports.Vector2Util
 
 type CollisionMap = CollisionGrid.CollisionMap
+type CollisionGrid = CollisionGrid.CollisionGrid
 
 local function getLinkKeys(id: string): {string}
 	local keys = {}
@@ -69,7 +70,7 @@ local function iterateLinks(firstLink: RoomLink, iterator: (link: RoomLink) -> (
 	end
 end
 
-local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, map: string, toMap: string, label: string?): RoomLink
+local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, map: string, toMap: string, label: string?, metadata: any): RoomLink
 	local _map = linker:GetMap(map)
 	local self = {
 		id = id,
@@ -82,6 +83,7 @@ local function newLink(linker, id: string, num: number, cost: number, nodePos: V
 		nodeId = NodeUtil.getNodeId(_map.gridSize.X, nodePos.X, nodePos.Y),
 		toMap = toMap,
 		group = HttpService:GenerateGUID(false),
+		metadata = metadata,
 
 		-- caches
 		_linkCosts = {},
@@ -318,6 +320,20 @@ local function onMapChanged(linker, map: RoomLinkCollisionMap, nodes: {Vector2},
 	end
 end
 
+local function validateCollisionMaps(...: CollisionMap): CollisionGrid
+	local grid
+	for _, map in ipairs({...}) do
+		if type(map) ~= "table" then
+			error('Invalid CollisionMap')
+		elseif grid and map.Grid ~= grid then
+			error('Invalid Linker map: CollisionMaps which share a Linker map must be on the same CollisionGrid')
+		else
+			grid = map.Grid
+		end
+	end
+	return grid
+end
+
 
 local Linker = {}
 Linker.__index = Linker
@@ -340,6 +356,7 @@ function Linker:AddMap(mapName: string, gridSize: Vector2, mainMap: CollisionMap
 	if self._maps[mapName] then
 		error(`Map '{mapName}' already exists`)
 	end
+	local grid = validateCollisionMaps(mainMap, ...)
 	local nodesX, nodesZ = CollisionGrid.combineMaps(mainMap, ...)
 	local connections = {}
 	local maps = {mainMap, ...}
@@ -353,6 +370,7 @@ function Linker:AddMap(mapName: string, gridSize: Vector2, mainMap: CollisionMap
 		end
 	end
 	local map = {
+		Grid = grid,
 		gridSize = gridSize,
 		maps = maps,
 		nodesX = nodesX,
@@ -435,7 +453,7 @@ do
 		_linkNum += 1
 		return _linkNum % 2
 	end
-	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromMap: string, toMap: string, label: string?): RoomLink?
+	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromMap: string, toMap: string, label: string?, metadata: any): RoomLink?
 		local map = self:GetMap(fromMap)
 		if not map then
 			error(`Map '{fromMap}' does not exist`)
@@ -450,7 +468,7 @@ do
 		fromPos = Vector2Util.floor(fromPos)
 		-- Create link
 		local num = getLinkNum()
-		local link = newLink(self, id, num, cost, fromPos, fromMap, toMap, label)
+		local link = newLink(self, id, num, cost, fromPos, fromMap, toMap, label, metadata)
 		-- Find link group
 		local linkGroup: RoomLink = self:FindLinkFromPos(fromMap, fromPos)
 		-- Add link to link group
@@ -473,18 +491,18 @@ do
 	end
 end
 
-function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?, bidirectional: boolean?, label: string?): ()
+function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?, bidirectional: boolean?, label: string?, metadata: any): ()
 	assert(cost, 'Cost must be a number')
 	fromPos = Vector2Util.floor(fromPos)
 	toPos = Vector2Util.floor(toPos)
 	toMap = toMap or fromMap
 	bidirectional = bidirectional ~= false
 	--
-	local linkA = self:_AddLink(id, cost, fromPos, fromMap, toMap, label)
+	local linkA = self:_AddLink(id, cost, fromPos, fromMap, toMap, label, metadata)
 	if not linkA then
 		return
 	end
-	local linkB = self:_AddLink(id, bidirectional and cost or math.huge, toPos, toMap, fromMap, label)
+	local linkB = self:_AddLink(id, bidirectional and cost or math.huge, toPos, toMap, fromMap, label, metadata)
 	if not linkB then
 		removeLink(self, linkA)
 		return
@@ -765,6 +783,23 @@ function Linker:FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, 
 	return true, path
 end
 
+function Linker._getMapNameForGrid(grid: CollisionGrid, labels: {string}?): string
+	-- Sort labels
+	if labels then
+		table.sort(labels, function(a, b)
+			return a < b
+		end)
+	end
+	-- Get linker map name
+	local name = `{grid.Id}`
+	if labels then
+		for _, label in ipairs(labels) do
+			name = `{name}\0{label}`
+		end
+	end
+	return name
+end
+
 export type RoomLink = {
 	id: string,
 	num: number,
@@ -775,12 +810,14 @@ export type RoomLink = {
 	map: string,
 	toMap: string,
 	group: string,
+	metadata: any,
 	_groupLinks: {[RoomLink]: true}?,
 
 	-- caches
 	_linkCosts: {[RoomLink]: number},
 }
 type RoomLinkCollisionMap = {
+	Grid: CollisionGrid,
 	gridSize: Vector2,
 	maps: {CollisionMap},
 	nodesX: {number},
