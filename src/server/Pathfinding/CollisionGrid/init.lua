@@ -33,6 +33,9 @@ type Object = {
 }
 export type ObjectType = number
 export type ObjectTypeName = "Collision" | "Negation"
+export type CollisionMapConfig = {
+	CollisionsByDefault: boolean,
+}
 
 local XZ = Vector3.new(1, 0, 1)
 
@@ -799,6 +802,19 @@ function CollisionGrid.combineGroups(groupsX: { [number]: any }, groupsZ: { [num
 	collisionsX = CollisionGrid.concat(bit32.band, 0, collisionsX, table.unpack(negX))
 	collisionsZ = CollisionGrid.concat(bit32.band, 0, collisionsZ, table.unpack(negZ))
 	return collisionsX or {}, collisionsZ or {}
+end
+
+function CollisionGrid.getFilledCollisions(gridSize: Vector2): (CollisionGridList, CollisionGridList)
+	local nodesX, nodesZ = {}, {}
+	local numGroupsX = math.ceil(gridSize.X / 32)
+	local numGroupsZ = math.ceil(gridSize.Y / 32)
+	for i = 1, numGroupsX * gridSize.X do
+		nodesX[i] = Bit32Util.FILL_R[31]
+	end
+	for i = 1, numGroupsZ * gridSize.Y do
+		nodesZ[i] = Bit32Util.FILL_R[31]
+	end
+	return nodesX, nodesZ
 end
 
 export type CollisionGrid = typeof(CollisionGrid.newAsync(...))
