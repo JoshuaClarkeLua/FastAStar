@@ -53,7 +53,7 @@ function AJPS.nextNode(self): (Vector2?, number?)
 end
 function AJPS.canWalk(self, x, z): boolean
 	return GridUtil.isInGrid(self.gridSize.X, self.gridSize.Y, x, z)
-		and CollisionGrid.HasCollision(self.costsX, self.gridSize.Y, x, z) < 1
+		and CollisionGrid.HasCollision(self.costsX, self.gridSize.Y, x, z, self.collisionsByDefault) < 1
 end
 
 function AJPS.allNeighbors(self, node): { Vector2 }

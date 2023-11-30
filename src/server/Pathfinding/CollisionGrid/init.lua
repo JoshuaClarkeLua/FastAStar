@@ -11,31 +11,7 @@ local GridUtil = require(script.Parent.GridUtil)
 local NodeUtil = require(script.Parent.NodeUtil)
 
 type JobHandler = ParallelJobHandler.JobHandler
-export type ObjectData = {
-	cf: CFrame,
-	size: Vector3,
-}
-export type ObjNodes = { number } -- {x, z, x, z, ...}
-export type CollisionMap = {
-	Name: string,
-	Grid: CollisionGrid,
-	metadata: any,
-	[number]: {
-		OnChanged: RBXScriptSignal, -- (nodes: {Vector2}, added: boolean)
-		nodeMap: { [number]: number },
-		nodesX: { [number]: number },
-		nodesZ: { [number]: number },
-	},
-}
-type Object = {
-	nodes: ObjNodes,
-	maps: { [string]: any }, -- [MapName]: any
-}
-export type ObjectType = number
-export type ObjectTypeName = "Collision" | "Negation"
-export type CollisionMapConfig = {
-	CollisionsByDefault: boolean,
-}
+
 
 local XZ = Vector3.new(1, 0, 1)
 
@@ -43,7 +19,7 @@ local OBJ_TYPE = {
 	Collision = 1,
 	Negation = 2,
 }
-local MAP_DEFAULTS = {
+local MAP_GROUP_DEFAULTS = {
 	[OBJ_TYPE.Collision] = 0,
 	[OBJ_TYPE.Negation] = 0xFFFFFFFF,
 }
@@ -59,6 +35,7 @@ local MAP_BIT_UNSET = {
 local CollisionGrid = {}
 CollisionGrid.__index = CollisionGrid
 CollisionGrid.OBJECT_TYPE = OBJ_TYPE
+
 
 local function addMapObject(self, object, _map, type, invert): ()
 	-- Add object to map
@@ -160,17 +137,22 @@ function CollisionGrid.newAsync(
 	end
 	local self = setmetatable({
 		Id = HttpService:GenerateGUID(false),
+		Origin = origin,
+		Size = gridSize,
 		maps = {} :: { [string]: CollisionMap }, -- [mapName]: CollisionMap
 		queued = {} :: { [string]: ObjectData }, -- [id]: ObjectData
 		objects = {} :: { [string]: Object }, -- [id]: Object
 		--
+		OnMapAdded = Signal.new(), -- (mapName: string, map: CollisionMap)
+		OnMapRemoved = Signal.new(), -- (mapName: string)
+		OnMapChanged = Signal.new(), -- (mapName: string, nodes: {Vector2}, isCollision: boolean)
 		_OnResume = Signal.new(),
 		--
 		_handler = _handler,
 		_job = _handler:NewJob("CollisionGrid"),
 		_paused = 0, -- Keeps track of times PauseAsync is called
-		_origin = origin,
-		_gridSize = gridSize,
+		_origin = origin, -- TODO: deprecated, Remove this
+		_gridSize = gridSize, -- TODO: deprecated, Remove this
 		_numGroupsX = math.ceil(gridSize.X / 32),
 		_numGroupsZ = math.ceil(gridSize.Y / 32),
 	}, CollisionGrid)
@@ -279,28 +261,24 @@ function CollisionGrid:_GetQueued(amount: number): ...string & CFrame & Vector3
 	return id, data[1], data[2], self:_GetQueued(amount - 1)
 end
 
-function CollisionGrid:AddMap(map: string, collisionsByDefault: boolean?, metadata: any): ()
+function CollisionGrid:AddMap(map: string, collisionsByDefault: boolean?): ()
 	if self.maps[map] then
 		error(`Map '{map}' already exists`)
 	end
 	self.maps[map] = {
-		Name = map,
-		Grid = self,
-		metadata = metadata,
+		CollisionsByDefault = collisionsByDefault or false,
 		[OBJ_TYPE.Collision] = {
-			OnChanged = Signal.new(),
 			nodeMap = {},
 			nodesX = {},
 			nodesZ = {},
 		},
 		[OBJ_TYPE.Negation] = {
-			OnChanged = Signal.new(),
 			nodeMap = {},
 			nodesX = {},
 			nodesZ = {},
 		},
 	}
-	if collisionsByDefault == true then
+	--[[ if collisionsByDefault == true then
 		local collisionMap = self.maps[map][OBJ_TYPE.Collision]
 		for i = 1, self._gridSize.X * self._gridSize.Y do
 			collisionMap.nodeMap[i] = 1
@@ -311,7 +289,8 @@ function CollisionGrid:AddMap(map: string, collisionsByDefault: boolean?, metada
 		for i = 1, self._numGroupsZ * self._gridSize.Y do
 			collisionMap.nodesZ[i] = Bit32Util.FILL_R[31]
 		end
-	end
+	end ]]
+	self.OnMapAdded:Fire(map, self.maps[map])
 end
 
 function CollisionGrid:RemoveMap(map: string): ()
@@ -322,6 +301,7 @@ function CollisionGrid:RemoveMap(map: string): ()
 	for _, object in pairs(self.objects) do
 		object.maps[map] = nil
 	end
+	self.OnMapRemoved:Fire(map)
 end
 
 function CollisionGrid:HasMap(map: string): boolean
@@ -366,8 +346,15 @@ function CollisionGrid:_AddMapNodes(nodes: ObjNodes, mapName: string, type: Obje
 	-- Get the type map
 	local typeMap = map[type]
 	--
-	local default = MAP_DEFAULTS[type]
+	local groupDefault = MAP_GROUP_DEFAULTS[type]
+	local nodeDefault = 0
 	local bitSet = MAP_BIT_SET[type]
+	if map.CollisionsByDefault and type == OBJ_TYPE.Collision then
+		groupDefault = bit32.bnot(groupDefault)
+		nodeDefault = 1
+	end
+	print(groupDefault, nodeDefault, bitSet)
+
 	-- Add nodes
 	local changedNodes = {} :: { Vector2 }
 	for i = 1, #nodes, 2 do
@@ -375,29 +362,30 @@ function CollisionGrid:_AddMapNodes(nodes: ObjNodes, mapName: string, type: Obje
 		local z = nodes[i + 1]
 		local nodeId = NodeUtil.getNodeId(self._gridSize.X, x, z)
 
-		if typeMap.nodeMap[nodeId] then
-			typeMap.nodeMap[nodeId] += 1
-
-			if typeMap.nodeMap[nodeId] == 0 then
-				typeMap.nodeMap[nodeId] = nil
-			end
-		else
-			typeMap.nodeMap[nodeId] = 1
+		local collisions = (typeMap.nodeMap[nodeId] or nodeDefault) + 1
+		-- Add collisions if collisions went from 0 to 1
+		if collisions == 1 then
 			-- Add collision to nodes
 			table.insert(changedNodes, Vector2.new(x, z))
 			-- Update nodesX
-			local groupId = CollisionGrid.GetGroupId(self._gridSize.X, x, z)
-			local group = typeMap.nodesX[groupId] or default
-			typeMap.nodesX[groupId] = bit32.replace(group, bitSet, z % 32)
+			local groupId = CollisionGrid.GetGroupId(self._gridSize.Y, x, z)
+			local group = bit32.replace(typeMap.nodesX[groupId] or groupDefault, bitSet, z % 32)
+			typeMap.nodesX[groupId] = group ~= groupDefault and group or nil
 			-- Update nodesZ
-			groupId = CollisionGrid.GetGroupId(self._gridSize.Y, z, x)
-			group = typeMap.nodesZ[groupId] or default
-			typeMap.nodesZ[groupId] = bit32.replace(group, bitSet, x % 32)
+			groupId = CollisionGrid.GetGroupId(self._gridSize.X, z, x)
+			group = bit32.replace(typeMap.nodesZ[groupId] or groupDefault, bitSet, x % 32)
+			typeMap.nodesZ[groupId] = group ~= groupDefault and group or nil
+		end
+		-- Update nodeMap, set nodeId to nil if it is equal to the nodeDefault value
+		if collisions == nodeDefault then
+			typeMap.nodeMap[nodeId] = nil 
+		else
+			typeMap.nodeMap[nodeId] = collisions
 		end
 	end
 
 	if next(changedNodes) ~= nil then
-		typeMap.OnChanged:Fire(changedNodes, true)
+		self.OnMapChanged:Fire(map, changedNodes, type == OBJ_TYPE.Collision)
 	end
 end
 
@@ -409,8 +397,13 @@ function CollisionGrid:_RemoveMapNodes(nodes: ObjNodes, mapName: string, type: O
 	-- Get the type map
 	local typeMap = map[type]
 	--
-	local default = MAP_DEFAULTS[type]
+	local groupDefault = MAP_GROUP_DEFAULTS[type]
+	local nodeDefault = 0
 	local bitUnset = MAP_BIT_UNSET[type]
+	if map.CollisionsByDefault and type == OBJ_TYPE.Collision then
+		groupDefault = bit32.bnot(groupDefault)
+		nodeDefault = 1
+	end
 	-- Remove nodes
 	local changedNodes = {} :: { Vector2 }
 	for i = 1, #nodes, 2 do
@@ -418,35 +411,30 @@ function CollisionGrid:_RemoveMapNodes(nodes: ObjNodes, mapName: string, type: O
 		local z = nodes[i + 1]
 		local nodeId = NodeUtil.getNodeId(self._gridSize.X, x, z)
 
-		if typeMap.nodeMap[nodeId] then
-			typeMap.nodeMap[nodeId] -= 1
-			-- Update nodes if no more collisions
-			if typeMap.nodeMap[nodeId] == 0 then
-				typeMap.nodeMap[nodeId] = nil
-				-- Update nodes
-				table.insert(changedNodes, Vector2.new(x, z))
-				-- Update nodesX
-				local groupId = CollisionGrid.GetGroupId(self._gridSize.X, x, z)
-				local group = typeMap.nodesX[groupId]
-				if group ~= nil then
-					local v = bit32.replace(group, bitUnset, z % 32)
-					typeMap.nodesX[groupId] = v ~= default and v or nil
-				end
-				-- Update nodesZ
-				groupId = CollisionGrid.GetGroupId(self._gridSize.Y, z, x)
-				group = typeMap.nodesZ[groupId]
-				if group ~= nil then
-					local v = bit32.replace(group, bitUnset, x % 32)
-					typeMap.nodesZ[groupId] = v ~= default and v or nil
-				end
-			end
+		local collisions = (typeMap.nodeMap[nodeId] or nodeDefault) - 1
+		-- Add collisions if collisions went from 1 to 0
+		if collisions == 0 then
+			-- Add collision to nodes
+			table.insert(changedNodes, Vector2.new(x, z))
+			-- Update nodesX
+			local groupId = CollisionGrid.GetGroupId(self._gridSize.Y, x, z)
+			local group = bit32.replace(typeMap.nodesX[groupId] or groupDefault, bitUnset, z % 32)
+			typeMap.nodesX[groupId] = group ~= groupDefault and group or nil
+			-- Update nodesZ
+			groupId = CollisionGrid.GetGroupId(self._gridSize.X, z, x)
+			group = bit32.replace(typeMap.nodesZ[groupId] or groupDefault, bitUnset, x % 32)
+			typeMap.nodesZ[groupId] = group ~= groupDefault and group or nil
+		end
+		-- Update nodeMap, set nodeId to nil if it is equal to the nodeDefault value
+		if collisions == nodeDefault then
+			typeMap.nodeMap[nodeId] = nil 
 		else
-			typeMap.nodeMap[nodeId] = -1
+			typeMap.nodeMap[nodeId] = collisions
 		end
 	end
 
 	if next(changedNodes) ~= nil then
-		typeMap.OnChanged:Fire(changedNodes, false)
+		self.OnMapChanged:Fire(map, changedNodes, type == OBJ_TYPE.Negation)
 	end
 end
 
@@ -551,6 +539,13 @@ function CollisionGrid:GetMap(mapName: string): CollisionMap?
 	return self.maps[mapName]
 end
 
+function CollisionGrid:ObserveMaps(observer: (name: string, map: CollisionMap) -> ()): RBXScriptConnection
+	for name, map in pairs(self.maps) do
+		observer(name, map)
+	end
+	return self.OnMapAdded:Connect(observer)
+end
+
 function CollisionGrid:GetSize(): Vector2
 	return self._gridSize
 end
@@ -575,7 +570,11 @@ function CollisionGrid:HasPos3D(pos: Vector3): boolean
 end
 
 function CollisionGrid.GetPosFromNodeId(gridSize: Vector2, nodeId: number): (number, number)
-	return NodeUtil.getPosFromId(gridSize.X, nodeId)
+	return NodeUtil.getPosFromId(gridSize.Y, nodeId)
+end
+
+function CollisionGrid.GetNodeIdFromPos(gridSize: Vector2, x: number, z: number): number
+	return NodeUtil.getNodeId(gridSize.Y, x, z)
 end
 
 function CollisionGrid.GetGroupId(rowSize: number, row: number, col: number): number
@@ -583,10 +582,9 @@ function CollisionGrid.GetGroupId(rowSize: number, row: number, col: number): nu
 	return (row * numGroups) + math.ceil((col + 1) / 32)
 end
 
-function CollisionGrid.HasCollision(grid: CollisionGridList, gridSize: number, row: number, col: number): number
+function CollisionGrid.HasCollision(grid: CollisionGridList, gridSize: number, row: number, col: number, collisionsByDefault: boolean?): number
 	local groupId = CollisionGrid.GetGroupId(gridSize, row, col)
-	local group = grid[groupId] or 0
-	return bit32.extract(group, col % 32)
+	return bit32.extract(CollisionGrid.GetGroup(grid, groupId, OBJ_TYPE.Collision, collisionsByDefault), col % 32)
 end
 
 function CollisionGrid.GetBitsBehind(group: number, col: number, dir: number): number
@@ -626,12 +624,19 @@ function CollisionGrid.CanReachBit(group: number, fromBit: number, toBit: number
 	end
 end
 
-function CollisionGrid.GetGroup(grid: CollisionGridList, groupId: number, type: ObjectType): number
-	return grid[groupId] or MAP_DEFAULTS[type]
+function CollisionGrid.GetGroup(grid: CollisionGridList, groupId: number, type: ObjectType, collisionsByDefault: boolean?): number
+	local group = grid[groupId]
+	if not group then
+		group = MAP_GROUP_DEFAULTS[type]
+		if collisionsByDefault and type == OBJ_TYPE.Collision then
+			group = bit32.bnot(group)
+		end
+	end
+	return group
 end
 
-function CollisionGrid.GetCollisionGroup(grid: CollisionGridList, groupId: number): number
-	return CollisionGrid.GetGroup(grid, groupId, OBJ_TYPE.Collision)
+function CollisionGrid.GetCollisionGroup(grid: CollisionGridList, groupId: number, collisionsByDefault: boolean?): number
+	return CollisionGrid.GetGroup(grid, groupId, OBJ_TYPE.Collision, collisionsByDefault)
 end
 
 --[=[
@@ -643,13 +648,14 @@ function CollisionGrid.GetRowFromStartCol(
 	rowSize: number,
 	row: number,
 	startCol: number,
-	dir: number
+	dir: number,
+	collisionsByDefault: boolean?
 ): (number?, number?, number?)
 	local numGroups = math.ceil((rowSize + 1) / 32)
 	local firstGroupId = CollisionGrid.GetGroupId(rowSize, row, startCol)
 	local col = startCol % 32
 
-	local firstGroup = grid[firstGroupId] or 0
+	local firstGroup = CollisionGrid.GetGroup(grid, firstGroupId, OBJ_TYPE.Collision, collisionsByDefault)
 	if firstGroup ~= 0 then
 		firstGroup = CollisionGrid.GetBitsInFront(firstGroup, col, dir)
 	end
@@ -729,82 +735,130 @@ function CollisionGrid.concat(
 	return newList
 end
 
-function CollisionGrid.combineMaps(...: CollisionMap): (CollisionGridList, CollisionGridList)
-	local colX = {}
-	local colZ = {}
-	local negX = {}
-	local negZ = {}
-	local i = 1
-	local map = select(i, ...)
-	while map ~= nil do
-		if map[CollisionGrid.OBJECT_TYPE.Collision] then
-			table.insert(colX, map[CollisionGrid.OBJECT_TYPE.Collision].nodesX)
-			table.insert(colZ, map[CollisionGrid.OBJECT_TYPE.Collision].nodesZ)
+function CollisionGrid._combineMaps(groupDefault: number, type, maps: {CollisionMap}): (CollisionGridList, CollisionGridList)
+	local X = {}
+	local Z = {}
+	for _, map in pairs(maps) do
+		if map[type] then
+			table.insert(X, map[type].nodesX)
+			table.insert(Z, map[type].nodesZ)
 		end
-		if map[CollisionGrid.OBJECT_TYPE.Negation] then
-			table.insert(negX, map[CollisionGrid.OBJECT_TYPE.Negation].nodesX)
-			table.insert(negZ, map[CollisionGrid.OBJECT_TYPE.Negation].nodesZ)
-		end
-		i += 1
-		map = select(i, ...)
 	end
 	-- Combine maps
 	local collisionsX, collisionsZ
-	if #colX > 0 then
+	if #X > 0 then
+		local fn = type == OBJ_TYPE.Collision and bit32.bor or bit32.band
 		-- Combine collision maps
-		collisionsX = CollisionGrid.concat(bit32.bor, 0, table.unpack(colX))
-		collisionsZ = CollisionGrid.concat(bit32.bor, 0, table.unpack(colZ))
-		-- Combine negation maps with collision maps
-		collisionsX = CollisionGrid.concat(bit32.band, 0, collisionsX, table.unpack(negX))
-		collisionsZ = CollisionGrid.concat(bit32.band, 0, collisionsZ, table.unpack(negZ))
+		collisionsX = CollisionGrid.concat(fn, groupDefault, table.unpack(X))
+		collisionsZ = CollisionGrid.concat(fn, groupDefault, table.unpack(Z))
 	end
 	return collisionsX or {}, collisionsZ or {}
 end
 
-function CollisionGrid.combineGroups(groupsX: { [number]: any }, groupsZ: { [number]: any }, ...: CollisionMap): ()
-	local colX = {}
-	local colZ = {}
-	local negX = {}
-	local negZ = {}
+function CollisionGrid._combineGroups(groupsX: {[number]: any}?, groupsZ: {[number]: any}?, groupDefault: number, type, maps: {CollisionMap}): (CollisionGridList, CollisionGridList)
+	local X = {}
+	local Z = {}
+	for _, map in pairs(maps) do
+		if map[type] then
+			if groupsX then
+				for groupId in pairs(groupsX) do
+					table.insert(X, map[type].nodesX[groupId])
+				end
+			end
+			if groupsZ then
+				for groupId in pairs(groupsZ) do
+					table.insert(Z, map[type].nodesZ[groupId])
+				end
+			end
+		end
+	end
+	-- Combine maps
+	local collisionsX, collisionsZ
+	if #X > 0 then
+		local fn = type == OBJ_TYPE.Collision and bit32.bor or bit32.band
+		-- Combine collision maps
+		collisionsX = CollisionGrid.concat(fn, groupDefault, table.unpack(X))
+		collisionsZ = CollisionGrid.concat(fn, groupDefault, table.unpack(Z))
+	end
+	return collisionsX or {}, collisionsZ or {}
+end
+
+function CollisionGrid.combineMaps(...: CollisionMap): (CollisionGridList, CollisionGridList, boolean)
+	local colDefault = MAP_GROUP_DEFAULTS[OBJ_TYPE.Collision]
+	local invColDefault = bit32.bnot(MAP_GROUP_DEFAULTS[OBJ_TYPE.Collision])
+	--
+	local normalList = {}
+	local collisionByDefaultList = {}
+	local collisionsByDefault = false
 	local i = 1
 	local map = select(i, ...)
 	while map ~= nil do
-		local colXGroups = {}
-		local colZGroups = {}
-		local negXGroups = {}
-		local negZGroups = {}
-		for group in pairs(groupsX) do
-			colXGroups[group] = map[CollisionGrid.OBJECT_TYPE.Collision].nodesX[group]
-			negXGroups[group] = map[CollisionGrid.OBJECT_TYPE.Negation].nodesX[group]
-		end
-		for group in pairs(groupsZ) do
-			colZGroups[group] = map[CollisionGrid.OBJECT_TYPE.Collision].nodesZ[group]
-			negZGroups[group] = map[CollisionGrid.OBJECT_TYPE.Negation].nodesZ[group]
-		end
-		if next(colXGroups) then
-			table.insert(colX, colXGroups)
-		end
-		if next(colZGroups) then
-			table.insert(colZ, colZGroups)
-		end
-		if next(negXGroups) then
-			table.insert(negX, negXGroups)
-		end
-		if next(negZGroups) then
-			table.insert(negZ, negZGroups)
+		if map.CollisionsByDefault then
+			collisionsByDefault = true
+			table.insert(collisionByDefaultList, map)
+		else
+			table.insert(normalList, map)
 		end
 		i += 1
 		map = select(i, ...)
 	end
-	-- Combine group lists
-	local collisionsX, collisionsZ
-	-- Combine collision maps
-	collisionsX = CollisionGrid.concat(bit32.bor, 0, table.unpack(colX))
-	collisionsZ = CollisionGrid.concat(bit32.bor, 0, table.unpack(colZ))
+	-- Combine normal map collision maps
+	local cX, cZ = CollisionGrid._combineMaps(colDefault, OBJ_TYPE.Collision, normalList)
+	-- Combine collision maps with collisionsByDefault set to true
+	if collisionsByDefault then
+		-- Combine maps with collisionsByDefault set to true
+		local colByDefaultX, colByDefaultZ = CollisionGrid._combineMaps(invColDefault, OBJ_TYPE.Collision, collisionByDefaultList)
+		-- Combine normal maps with maps with collisionsByDefault set to true
+		-- Order of maps is important, normal maps must be last
+		cX = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultX, cX)
+		cZ = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultZ, cZ)
+	end
+	-- Combine all negation maps together
+	local nX, nZ = CollisionGrid._combineMaps(MAP_GROUP_DEFAULTS[OBJ_TYPE.Negation], OBJ_TYPE.Negation, {...})
 	-- Combine negation maps with collision maps
-	collisionsX = CollisionGrid.concat(bit32.band, 0, collisionsX, table.unpack(negX))
-	collisionsZ = CollisionGrid.concat(bit32.band, 0, collisionsZ, table.unpack(negZ))
-	return collisionsX or {}, collisionsZ or {}
+	local default = collisionsByDefault and invColDefault or colDefault
+	local collisionsX = CollisionGrid.concat(bit32.band, default, cX, nX)
+	local collisionsZ = CollisionGrid.concat(bit32.band, default, cZ, nZ)
+	return collisionsX or {}, collisionsZ or {}, collisionsByDefault
+end
+
+function CollisionGrid.combineGroups(groupsX: { [number]: any }?, groupsZ: { [number]: any }?, ...: CollisionMap): (CollisionGridList, CollisionGridList, boolean)
+	local colDefault = MAP_GROUP_DEFAULTS[OBJ_TYPE.Collision]
+	local invColDefault = bit32.bnot(MAP_GROUP_DEFAULTS[OBJ_TYPE.Collision])
+	--
+	local normalList = {}
+	local collisionByDefaultList = {}
+	local collisionsByDefault = false
+	local i = 1
+	local map = select(i, ...)
+	while map ~= nil do
+		if map.CollisionsByDefault then
+			collisionsByDefault = true
+			table.insert(collisionByDefaultList, map)
+		else
+			table.insert(normalList, map)
+		end
+		i += 1
+		map = select(i, ...)
+	end
+	-- Combine normal map collision maps
+	local cX, cZ = CollisionGrid._combineGroups(groupsX, groupsZ, colDefault, OBJ_TYPE.Collision, normalList)
+	-- Combine collision maps with collisionsByDefault set to true
+	if collisionsByDefault then
+		-- Combine maps with collisionsByDefault set to true
+		local colByDefaultX, colByDefaultZ = CollisionGrid._combineGroups(groupsX, groupsZ, invColDefault, OBJ_TYPE.Collision, collisionByDefaultList)
+		-- Combine normal maps with maps with collisionsByDefault set to true
+		-- Order of maps is important, normal maps must be last
+		cX = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultX, cX)
+		cZ = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultZ, cZ)
+	end
+	-- Combine all negation maps together
+	local nX, nZ = CollisionGrid._combineGroups(groupsX, groupsZ, MAP_GROUP_DEFAULTS[OBJ_TYPE.Negation], OBJ_TYPE.Negation, {...})
+	-- Combine negation maps with collision maps
+	local default = collisionsByDefault and invColDefault or colDefault
+	local collisionsX = CollisionGrid.concat(bit32.band, default, cX, nX)
+	local collisionsZ = CollisionGrid.concat(bit32.band, default, cZ, nZ)
+	return collisionsX or {}, collisionsZ or {}, collisionsByDefault
 end
 
 function CollisionGrid.getFilledCollisions(gridSize: Vector2): (CollisionGridList, CollisionGridList)
@@ -820,6 +874,29 @@ function CollisionGrid.getFilledCollisions(gridSize: Vector2): (CollisionGridLis
 	return nodesX, nodesZ
 end
 
+
+export type ObjectData = {
+	cf: CFrame,
+	size: Vector3,
+}
+export type ObjNodes = { number } -- {x, z, x, z, ...}
+export type CollisionMap = {
+	CollisionsByDefault: boolean,
+	[number]: {
+		nodeMap: { [number]: number },
+		nodesX: { [number]: number },
+		nodesZ: { [number]: number },
+	},
+}
+type Object = {
+	nodes: ObjNodes,
+	maps: { [string]: any }, -- [MapName]: any
+}
+export type ObjectType = number
+export type ObjectTypeName = "Collision" | "Negation"
+export type CollisionMapConfig = {
+	CollisionsByDefault: boolean,
+}
 export type CollisionGrid = typeof(CollisionGrid.newAsync(...))
 export type CollisionGridList = { [number]: number }
 type Promise = typeof(Promise.new(...))

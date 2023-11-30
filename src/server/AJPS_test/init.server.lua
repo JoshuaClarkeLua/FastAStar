@@ -32,24 +32,32 @@ local gridSize = Vector2.new(bSize.X, bSize.Z)
 
 local costGrid = CollisionGrid.newAsync(origin, gridSize)
 costGrid:AddMap("main")
+costGrid:AddMap("main2")
 
-local objects = workspace.Objects:GetChildren()
-for _, part: BasePart in ipairs(objects) do
+for _, part: BasePart in ipairs(workspace.Objects:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
-	costGrid:SetObject(id, part.CFrame, part.Size)
+	costGrid:SetObjectAsync(id, part.CFrame, part.Size)
 	costGrid:AddMapObject(id, 'main', 'Collision')
 end
 
--- for _, part: BasePart in ipairs(workspace.Negations:GetChildren()) do
+-- for _, part: BasePart in ipairs(workspace.Objects2:GetChildren()) do
 -- 	local id = HttpService:GenerateGUID(false)
 -- 	part:SetAttribute("Id", id)
--- 	costGrid:AddObject(id, part.CFrame, part.Size)
--- 	costGrid:AddMapObject(id, 'main', CollisionGrid.OBJECT_TYPE.Negation)
+-- 	costGrid:SetObjectAsync(id, part.CFrame, part.Size)
+-- 	costGrid:AddMapObject(id, 'main', 'Collision', true)
 -- end
 
-local mainMap = costGrid:GetMapAsync("main")
+--[[ for _, part: BasePart in ipairs(workspace.Negations:GetChildren()) do
+	local id = HttpService:GenerateGUID(false)
+	part:SetAttribute("Id", id)
+	costGrid:SetObjectAsync(id, part.CFrame, part.Size)
+	costGrid:AddMapObject(id, 'main', 'Negation')
+end ]]
 
+local main = costGrid:GetMapAsync("main")
+local main2 = costGrid:GetMapAsync("main2")
+print(main)
 
 
 
@@ -73,7 +81,7 @@ local function _doPart(pos: Vector3): BasePart
 end
 
 
-CollisionGrid.iterX(gridSize, mainMap[CollisionGrid.OBJECT_TYPE.Collision].nodesX, function(x,z,cost)
+CollisionGrid.iterX(gridSize, main[CollisionGrid.OBJECT_TYPE.Collision].nodesX, function(x,z,cost)
 	local p = _doAttachment(base, offsetOrigin:PointToWorldSpace(Vector3.new(x, bSize2.Y, z)), Color3.new(cost, cost, cost))
 	p:SetAttribute("Pos", `{x}, {z}`)
 	p:SetAttribute("Cost", cost)
@@ -89,8 +97,7 @@ local function doPath()
 	local s = os.clock()
 	local start = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.START.CFrame.Position)
 	local goal = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.GOAL.CFrame.Position)
-	local colX, colZ = CollisionGrid.combineMaps(mainMap)
-	local path = AJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, colX, colZ)
+	local path = AJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, CollisionGrid.combineMaps(main, main2))
 	local _path = AJPS.reconstructPath(path, true, true)
 	s = os.clock() - s
 	print(s)
@@ -99,8 +106,8 @@ local function doPath()
 	folder.Name = 'Parts'
 	if #path > 2 then
 		local lastP
-		--[[ for i = 1, #_path do
-			local node = _path[i]
+		for i = 1, #path do
+			local node = path[i]
 			local p = _doPart((origin * CFrame.new(-bSize2.X, bSize2.Y, -bSize2.Z)):PointToWorldSpace(Vector3.new(node.X, 0, node.Y)))
 			p.Parent = folder
 			p.Name = i
@@ -119,7 +126,7 @@ local function doPath()
 				lastP.Beam.Attachment1 = a2
 			end
 			lastP = p
-		end ]]
+		end
 		--[[ for i = 1, #_path do
 			local node = _path[i]
 			local p = _doPart((origin * CFrame.new(-bSize2.X, bSize2.Y, -bSize2.Z)):PointToWorldSpace(Vector3.new(node.X, 0, node.Y)))

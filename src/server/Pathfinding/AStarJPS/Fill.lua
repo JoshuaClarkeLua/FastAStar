@@ -69,18 +69,18 @@ function AJPS.findJumpNode(self, node, dir, _g): (number?, number?)
 		return
 	end
 
-	local group, first, last = CollisionGrid.GetRowFromStartCol(costs, rowSize, row, col, _dir)
+	local group, first, last = CollisionGrid.GetRowFromStartCol(costs, rowSize, row, col, _dir, self.collisionsByDefault)
 	local _groupId = first
 	local groupU, firstU, lastU, _groupIdU
 	-- Get group up if not at the top of the grid
 	if row < colSize then
-		groupU, firstU, lastU = CollisionGrid.GetRowFromStartCol(costs, rowSize, row + 1, col, _dir)
+		groupU, firstU, lastU = CollisionGrid.GetRowFromStartCol(costs, rowSize, row + 1, col, _dir, self.collisionsByDefault)
 		_groupIdU = firstU
 	end
 	local groupD, firstD, lastD, _groupIdD
 	-- Get group down if not at the bottom of the grid
 	if row > 0 then
-		groupD, firstD, lastD = CollisionGrid.GetRowFromStartCol(costs, rowSize, row - 1, col, _dir)
+		groupD, firstD, lastD = CollisionGrid.GetRowFromStartCol(costs, rowSize, row - 1, col, _dir, self.collisionsByDefault)
 		_groupIdD = firstD
 	end
 

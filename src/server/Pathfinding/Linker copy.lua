@@ -1,7 +1,6 @@
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Signal = require(ReplicatedStorage.Packages.Signal)
-local Trove = require(ReplicatedStorage.Packages.Trove)
 local AStarJPS = require(script.Parent.AStarJPS)
 local CollisionGrid = require(script.Parent.CollisionGrid)
 local GridUtil = require(script.Parent.GridUtil)
@@ -75,18 +74,26 @@ local function iterateLinks(firstLink: RoomLink, iterator: (link: RoomLink) -> (
 	end
 end
 
-local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, grid: CollisionGrid, toGrid: CollisionGrid): RoomLink
+local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, map: string, toMap: string, label: string?, metadata: any): RoomLink
+	local _map = linker:GetMap(map)
 	local self = {
 		id = id,
 		num = num,
 		cost = cost,
+		label = label,
 		--
 		pos = nodePos,
-		grid = grid,
-		nodeId = CollisionGrid.GetNodeIdFromPos(grid.Size, nodePos.X, nodePos.Y),
-		toGrid = toGrid,
-		group = nil,
+		map = map,
+		nodeId = NodeUtil.getNodeId(_map.gridSize.X, nodePos.X, nodePos.Y),
+		toMap = toMap,
+		group = HttpService:GenerateGUID(false),
+		metadata = metadata,
+
+		-- caches
+		_linkCosts = {},
 	}
+	self._next = self
+	self._prev = self
 	return self
 end
 
@@ -337,40 +344,90 @@ Linker.__index = Linker
 
 function Linker.new()
 	local self = setmetatable({
-		OnLinkRemoved = Signal.new(), -- (grid: CollisionGrid, link: RoomLink)
+		OnLinkRemoved = Signal.new(), -- (link: RoomLink)
 	}, Linker)
 
-	self._grids = {} :: {[string]: RoomLinkCollisionMap} -- mapName -> RoomLinkCollisionMap
+	self._maps = {} :: {[string]: RoomLinkCollisionMap} -- mapName -> RoomLinkCollisionMap
 	
 	return self
 end
 
 function Linker:Destroy(): ()
-	for _, grid in pairs(self._grids) do
-		grid.trove:Destroy()
+	for map in pairs(self._maps) do
+		self:RemoveMap(map)
 	end
 end
 
-function Linker:_AddGrid(grid: CollisionGrid): ()
-	local gridData = {
-		trove = Trove.new(),
-		grid = grid,
+function Linker:AddMap(mapName: string, gridSize: Vector2, mainMap: CollisionMap, ...: CollisionMap): ()
+	if self._maps[mapName] then
+		error(`Map '{mapName}' already exists`)
+	end
+	local grid = validateCollisionMaps(mainMap, ...)
+	local nodesX, nodesZ = CollisionGrid.combineMaps(mainMap, ...)
+	local connections = {}
+	local maps = {mainMap, ...}
+	if #maps == 0 then
+		error('No maps')
+	else
+		for _, map in ipairs(maps) do
+			if type(map) ~= "table" then
+				error('Invalid map')
+			end
+		end
+	end
+	local map = {
+		Grid = grid,
+		gridSize = gridSize,
+		maps = maps,
+		nodesX = nodesX,
+		nodesZ = nodesZ,
 		links = {}, -- {[string]: RoomLink}
 		linksByNodeId = {}, -- {[nodeId]: {[string]: true}}
+		metadata = mainMap.metadata,
+		_groupChangesX = {}, -- Keeps track of the groups that changed due to added or removed collisions
+		_groupChangesZ = {}, -- Keeps track of the groups that changed due to added or removed collisions
+		_connections = connections,
+		_updateScheduled = false,
 	}
-	self._grids[grid.Id] = gridData
-end
+	self._maps[mapName] = map
 
-function Linker:_RemoveGrid(id: string): ()
-	local data = self._grids[id]
-	if not data then
-		return
+	for mapName, _map in ipairs(maps) do
+		local colMap = _map[CollisionGrid.OBJECT_TYPE.Collision]
+		local negMap = _map[CollisionGrid.OBJECT_TYPE.Negation]
+		local colConn = colMap.OnChanged:Connect(function(nodes: {Vector2}, added: boolean)
+			onMapChanged(self, map, nodes, added)
+		end)
+		local negConn = negMap.OnChanged:Connect(function(nodes: {Vector2}, added: boolean)
+			onMapChanged(self, map, nodes, not added)
+		end)
+		table.insert(connections, colConn)
+		table.insert(connections, negConn)
 	end
-	self._grids[id] = nil
 end
 
-function Linker:GetGridData(id: string): GridData?
-	return self._grids[id]
+function Linker:RemoveMap(map: string): ()
+	local _map = self._maps[map]
+	self._maps[map] = nil
+	-- Disconnect connections
+	for _, conn in ipairs(_map._connections) do
+		conn:Disconnect()
+	end
+	-- Remove links
+	for _, link: RoomLink in pairs(_map.links) do
+		-- Remove other link from the other map
+		local toMap = link.toMap
+		if toMap ~= map then
+			local _toMap = self:GetMap(toMap)
+			if _toMap then
+				removeMapLink(self, _toMap, self:_GetOtherLink(link))
+			end
+		end
+		--
+	end
+end
+
+function Linker:GetMap(map: string): RoomLinkCollisionMap?
+	return self._maps[map]
 end
 
 function Linker:_GetOtherLink(link: RoomLink): RoomLink
@@ -396,35 +453,30 @@ function Linker:FindLinkFromPos(map: string, pos: Vector2): RoomLink?
 	return findLink(self, _map, pos)
 end
 
-function Linker:_FindLinkGroup(link: RoomLink, maps: {string}): ()
-	
-end
-
 do
 	local _linkNum = -1
 	local function getLinkNum(): number
 		_linkNum += 1
 		return _linkNum % 2
 	end
-	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid): RoomLink?
-		if not GridUtil.isInGrid(fromGrid.Size.X, fromGrid.Size.Y, fromPos.X, fromPos.Y) then
+	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromMap: string, toMap: string, label: string?, metadata: any): RoomLink?
+		local map = self:GetMap(fromMap)
+		if not map then
+			error(`Map '{fromMap}' does not exist`)
+		end
+		if not GridUtil.isInGrid(map.gridSize.X, map.gridSize.Y, fromPos.X, fromPos.Y) then
 			warn('fromPos is not in grid')
 			return
 		end
-		if not GridUtil.isInGrid(toGrid.Size.X, toGrid.Size.Y, fromPos.X, fromPos.Y) then
-			warn('toPos is not in grid')
-			return
-		end
-		-- TODO: Update grid
-		-- triggerMapUpdate(self, map)
-
+		-- Update map
+		triggerMapUpdate(self, map)
+		--
+		fromPos = Vector2Util.floor(fromPos)
 		-- Create link
 		local num = getLinkNum()
-		local link = newLink(self, id, num, cost, fromPos, fromGrid, toGrid)
-
-
+		local link = newLink(self, id, num, cost, fromPos, fromMap, toMap, label, metadata)
 		-- Find link group
-		local linkGroup: RoomLink = self:FindLinkFromPos(fromGrid, fromPos)
+		local linkGroup: RoomLink = self:FindLinkFromPos(fromMap, fromPos)
 		-- Add link to link group
 		if linkGroup ~= nil then
 			addLink(self, link, linkGroup)
@@ -445,25 +497,18 @@ do
 	end
 end
 
-function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?, bidirectional: boolean?): ()
+function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?, bidirectional: boolean?, label: string?, metadata: any): ()
 	assert(cost, 'Cost must be a number')
-	-- Add grids
-	if not self:GetGridData(fromGrid) then
-		self:_AddGrid(fromGrid)
-	end
-	if toGrid and not self:GetGridData(toGrid) then
-		self:_AddGrid(toGrid)
-	end
 	fromPos = Vector2Util.floor(fromPos)
 	toPos = Vector2Util.floor(toPos)
+	toMap = toMap or fromMap
 	bidirectional = bidirectional ~= false
-	toGrid = toGrid or fromGrid
-	-- Add links
-	local linkA = self:_AddLink(id, cost, fromPos, fromGrid, toGrid)
+	--
+	local linkA = self:_AddLink(id, cost, fromPos, fromMap, toMap, label, metadata)
 	if not linkA then
 		return
 	end
-	local linkB = self:_AddLink(id, bidirectional and cost or math.huge, toPos, toGrid, fromGrid)
+	local linkB = self:_AddLink(id, bidirectional and cost or math.huge, toPos, toMap, fromMap, label, metadata)
 	if not linkB then
 		removeLink(self, linkA)
 		return
@@ -765,11 +810,17 @@ export type RoomLink = {
 	id: string,
 	num: number,
 	cost: number,
+	label: string?,
 	pos: Vector2,
 	nodeId: number,
-	grid: CollisionGrid,
-	toGrid: CollisionGrid,
-	group: {[RoomLink]: true}?,
+	map: string,
+	toMap: string,
+	group: string,
+	metadata: any,
+	_groupLinks: {[RoomLink]: true}?,
+
+	-- caches
+	_linkCosts: {[RoomLink]: number},
 }
 type RoomLinkCollisionMap = {
 	Grid: CollisionGrid,
@@ -786,13 +837,6 @@ type RoomLinkCollisionMap = {
 	_updateScheduled: boolean,
 }
 type Signal = typeof(Signal.new(...))
-type Trove = typeof(Trove.new(...))
-export type GridData = {
-	trove: Trove,
-	grid: CollisionGrid,
-	links: {[string]: RoomLink},
-	linksByNodeId: {[number]: {[string]: true}},
-}
 export type LinkPath = {RoomLink}
 export type Linker = typeof(Linker.new(...))
 return Linker

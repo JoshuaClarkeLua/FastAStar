@@ -54,7 +54,8 @@ function AJPS._setup(
 	start: Vector2,
 	heuristic: HeuristicName?,
 	collisionsX: CollisionGrid.CollisionGridList,
-	collisionsZ: CollisionGrid.CollisionGridList
+	collisionsZ: CollisionGrid.CollisionGridList,
+	collisionsByDefault: boolean?
 )
 	start = Vector2Util.round(start)
 	-- Return if start or goal is outside of grid
@@ -63,6 +64,7 @@ function AJPS._setup(
 	end
 	--
 	local self = {}
+	self.collisionsByDefault = collisionsByDefault
 	self.gridSize = gridSize
 	self.start = start
 	-- Setup map lists
@@ -114,9 +116,10 @@ function AJPS.findPath(
 	goal: Vector2,
 	heuristic: HeuristicName?,
 	collisionsX: CollisionGrid.CollisionGridList,
-	collisionsZ: CollisionGrid.CollisionGridList
+	collisionsZ: CollisionGrid.CollisionGridList,
+	collisionsByDefault: boolean?
 ): (Path, {[any]: any})
-	local success, self = AJPS._setup(gridSize, start, heuristic, collisionsX, collisionsZ)
+	local success, self = AJPS._setup(gridSize, start, heuristic, collisionsX, collisionsZ, collisionsByDefault)
 	if not success then return {}, self end
 	-- Setup goal data
 	local goalData = AJPS._getGoalData(self, goal)
@@ -154,9 +157,10 @@ function AJPS.findReachable(
 	goals: {[any]: Vector2},
 	stopAtFirst: boolean?,
 	collisionsX: CollisionGrid.CollisionGridList,
-	collisionsZ: CollisionGrid.CollisionGridList
+	collisionsZ: CollisionGrid.CollisionGridList,
+	collisionsByDefault: boolean?
 ): ({Vector2}, {[any]: any})
-	local success, self = AJPS._setup(gridSize, start, nil, collisionsX, collisionsZ)
+	local success, self = AJPS._setup(gridSize, start, nil, collisionsX, collisionsZ, collisionsByDefault)
 	self.goalsReached = {} -- {[nodeId]: true}
 	if not success then return {}, self end
 	-- Setup goal data
@@ -209,9 +213,10 @@ function AJPS.fill(
 	gridSize: Vector2,
 	start: Vector2,
 	collisionsX: CollisionGrid.CollisionGridList,
-	collisionsZ: CollisionGrid.CollisionGridList
+	collisionsZ: CollisionGrid.CollisionGridList,
+	collisionsByDefault: boolean?
 ): any
-	local success, self = AJPS._setup(gridSize, start, nil, collisionsX, collisionsZ)
+	local success, self = AJPS._setup(gridSize, start, nil, collisionsX, collisionsZ, collisionsByDefault)
 	self.goalsReached = {} -- {[nodeId]: true}
 	self.nodesReached = {} -- {[nodeId]: true}
 	if not success then return self end
