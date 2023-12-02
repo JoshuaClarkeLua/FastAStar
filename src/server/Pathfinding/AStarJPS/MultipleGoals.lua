@@ -1,4 +1,3 @@
-local Workspace = game:GetService("Workspace")
 local Imports = require(script.Parent.Parent.Imports)
 local Vector2Util = Imports.Vector2Util
 local AJPSUtil = require(script.Parent.AJPSUtil)
@@ -86,21 +85,21 @@ function AJPS.findJumpNode(self, node, dir, _g): (number?, number?)
 
 	local group, first, last = CollisionGrid.GetRowFromStartCol(costs, rowSize, row, col, _dir, self.collisionsByDefault)
 	local _groupId = first
-	local groupU, firstU, lastU, _groupIdU
+	local groupU, firstU, _groupIdU
 	-- Get group up if not at the top of the grid
 	if row < colSize then
-		groupU, firstU, lastU = CollisionGrid.GetRowFromStartCol(costs, rowSize, row + 1, col, _dir, self.collisionsByDefault)
+		groupU, firstU = CollisionGrid.GetRowFromStartCol(costs, rowSize, row + 1, col, _dir, self.collisionsByDefault)
 		_groupIdU = firstU
 	end
-	local groupD, firstD, lastD, _groupIdD
+	local groupD, firstD, _groupIdD
 	-- Get group down if not at the bottom of the grid
 	if row > 0 then
-		groupD, firstD, lastD = CollisionGrid.GetRowFromStartCol(costs, rowSize, row - 1, col, _dir, self.collisionsByDefault)
+		groupD, firstD = CollisionGrid.GetRowFromStartCol(costs, rowSize, row - 1, col, _dir, self.collisionsByDefault)
 		_groupIdD = firstD
 	end
 
 	local r, c, rcGroupId
-	local collisionBit, force
+	local collisionBit
 	-- print(first, group)
 	while true do
 		-- Check if we can reach the goal
@@ -124,7 +123,7 @@ function AJPS.findJumpNode(self, node, dir, _g): (number?, number?)
 
 		-- Check the upper group
 		if groupU then
-			collisionBit, force, rcGroupId, r, c = checkGroup(
+			collisionBit, _, rcGroupId, r, c = checkGroup(
 				row,
 				rowSize,
 				first,
@@ -145,7 +144,7 @@ function AJPS.findJumpNode(self, node, dir, _g): (number?, number?)
 
 		-- Check the lower group
 		if groupD then
-			collisionBit, force, rcGroupId, r, c = checkGroup(
+			collisionBit, _, rcGroupId, r, c = checkGroup(
 				row,
 				rowSize,
 				first,

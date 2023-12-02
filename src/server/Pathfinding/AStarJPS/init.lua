@@ -185,30 +185,6 @@ function AJPS.findReachable(
 	return goalsReached, self
 end
 
---[[ function AJPS.fill(
-	gridSize: Vector2,
-	start: Vector2,
-	collisionsX: CollisionGrid.CollisionGridList,
-	collisionsZ: CollisionGrid.CollisionGridList
-): any
-	local self = AJPS._setup(gridSize, start, nil, collisionsX, collisionsZ)
-	if not self then return {}, self end
-	-- Setup goal data
-	self.goal = Vector3.new(-1,0)
-	self.goalGroupIdX = -1
-	self.goalGroupIdZ = -1
-	self.goalBitX = 0
-	self.goalBitZ = 0
-	-- Setup start node
-	self.f = {}
-	self.f[self.startNodeId] = AJPSUtil.calF(self, self.start)
-	--
-	self.path = {}
-	-- Fill grid
-	Fill.fill(self, self.start, self.startNodeId)
-	return self
-end ]]
-
 function AJPS.fill(
 	gridSize: Vector2,
 	start: Vector2,

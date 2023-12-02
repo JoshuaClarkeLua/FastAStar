@@ -1,5 +1,3 @@
-local CollectionService = game:GetService("CollectionService")
-local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Signal = require(ReplicatedStorage.Packages.Signal)
 local Trove = require(ReplicatedStorage.Packages.Trove)
@@ -12,46 +10,6 @@ local Vector2Util = Imports.Vector2Util
 
 type CollisionMap = CollisionGrid.CollisionMap
 type CollisionGrid = CollisionGrid.CollisionGrid
-
-local function clearParts(): ()
-	local old = workspace:FindFirstChild("Linker_Parts")
-	if old then
-		old:Destroy()
-	end
-	local p = Instance.new("Folder")
-	p.Name = "Linker_Parts"
-	p.Parent = workspace
-end
-
-local function _doPart(col: Color3, pos: Vector2, prev: BasePart?): BasePart
-	local p = Instance.new("Part")
-	p.Anchored = true
-	p.Size = Vector3.one
-	p.Position = workspace.Floor1.CFrame:PointToWorldSpace(Vector3.new(pos.X-130, 10, pos.Y-130))
-	p.Color = col
-	p.Parent = workspace:FindFirstChild("Linker_Parts")
-	if prev then
-		local beam = Instance.new("Beam")
-		beam.FaceCamera = true
-		beam.Color = ColorSequence.new(col)
-		beam.Width0 = 2
-		beam.Width1 = 2
-		local a1 = Instance.new("Attachment")
-		a1.Parent = p
-		beam.Attachment0 = a1
-		beam.Parent = p
-		-- local _beam = prev:FindFirstChild("Beam")
-		-- if _beam then
-		-- 	local a2 = Instance.new("Attachment")
-		-- 	a2.Parent = p
-		-- 	_beam.Attachment1 = a2
-		-- end
-		local a2 = Instance.new("Attachment")
-		a2.Parent = prev
-		beam.Attachment1 = a2
-	end
-	return p
-end
 
 local function sortMaps(maps: {string}): ()
 	table.sort(maps, function(a,b)
@@ -117,7 +75,7 @@ end
 local function ungroupLink(linker, link: RoomLink): ()
 	if link.group ~= nil then
 		link.group[link] = nil
-		link.group = nil
+		link.group = nil :: any
 	end
 end
 
