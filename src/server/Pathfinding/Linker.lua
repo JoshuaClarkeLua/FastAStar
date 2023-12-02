@@ -529,27 +529,6 @@ do
 		local gridData = self:GetGridData(fromGrid.Id)
 		local link = newLink(self, id, num, cost, fromPos, gridData, self:GetGridData(toGrid.Id))
 
-		-- TODO: Do this in the _FindLinkPath function instead so you don't need to do it for every map combination
-		--[[
-			IDEA:
-			When calling _FindLinkPath with a map combination that hasn't been resolved before,
-			- Invoke function called resolveLinkGroups(grid, maps)
-				1. If this function was never called on this map combination before
-					1. Find all link groups using findReachable
-					2. Add links to groups
-					3. Cache group configuration under the links per-map
-						ex: link.group['ordered_map_names'] = {
-							maps = {[mapName]: true},
-							links = {[RoomLink]: true},
-						} -> group
-
-				2. If this function has been called on this map combination before
-					1. Check if any changes were done on any of the maps in the combination
-					2. If not, return
-					3. Run function similar to triggerMapUpdate to update the affected groups in the map combination
-					
-		]]
-
 		-- Add link to grid
 		local nodeId = NodeUtil.getNodeId(fromGrid.Size.X, fromPos.X, fromPos.Y)
 		local linksByNodeId = gridData.linksByNodeId[nodeId]
@@ -604,7 +583,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 	local mapName = getMapsName(sortedMapNames, true)
 	-- Resolve any unresolved link groups
 	for _, gridData in pairs(self._grids) do
-		resolveLinkGroups(self, fromGrid, sortedMapNames)
+		resolveLinkGroups(self, gridData, sortedMapNames)
 	end
 	-- Get map data
 	local fromMap = self:GetMapData(fromGrid.grid, mapName)

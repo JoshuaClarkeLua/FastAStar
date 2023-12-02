@@ -570,7 +570,7 @@ function CollisionGrid:HasPos3D(pos: Vector3): boolean
 	local gridSize = self:GetSize()
 	-- convert pos to grid space
 	local _pos = self:ToGridSpace(pos)
-	return GridUtil.isInGrid(gridSize.X, gridSize.Y, pos.X, pos.Z)
+	return GridUtil.isInGrid(gridSize.X, gridSize.Y, _pos.X, _pos.Z)
 end
 
 function CollisionGrid.GetPosFromNodeId(gridSize: Vector2, nodeId: number): (number, number)

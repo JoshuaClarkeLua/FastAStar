@@ -26,8 +26,6 @@ local Floor2Grid = CollisionGrid.newAsync(Floor2.CFrame, Floor2GridSize)
 Floor1Grid:AddMap("Main")
 Floor2Grid:AddMap("Main")
 
-local Floor1Origin = Floor1Grid:GetOrigin()
-local Floor2Origin = Floor2Grid:GetOrigin()
 
 
 for _, part: BasePart in ipairs(workspace.Floor1.Objects:GetChildren()) do
@@ -69,6 +67,7 @@ local function getGrid(pos: Vector3): CollisionGrid.CollisionGrid?
 			table.insert(_grids, grid)
 		end
 	end
+	-- print(#_grids)
 	local grid
 	if #grids > 1 then
 		local low = math.huge
@@ -93,6 +92,7 @@ local linker = Linker.new()
 for _, link in ipairs(workspace.Links:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	link:SetAttribute("LinkId", id)
+	link.Name = id
 	local from = link:FindFirstChild("1")
 	local to = link:FindFirstChild("2")
 	local fromGrid = getGrid(from.Position)
@@ -103,7 +103,6 @@ for _, link in ipairs(workspace.Links:GetChildren()) do
 	--
 	local cost = 0
 	linker:AddLink(id, cost, Vector2.new(fromPos.X,fromPos.Z), Vector2.new(toPos.X,toPos.Z), fromGrid, toGrid)
-	link.Name = id
 end
 
 local start = workspace.START
@@ -152,6 +151,9 @@ local goal = workspace.GOAL
 local function findLinkPath(): ()
 	local fromGrid = getGrid(start.Position)
 	local toGrid = getGrid(goal.Position)
+	if not fromGrid or not toGrid then
+		return
+	end
 	local startPos = fromGrid:ToGridSpace(start.Position)
 	local goalPos = toGrid:ToGridSpace(goal.Position)
 	startPos = Vector2.new(startPos.X, startPos.Z)
