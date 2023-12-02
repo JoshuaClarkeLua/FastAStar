@@ -97,7 +97,7 @@ local function doPath()
 	local s = os.clock()
 	local start = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.START.CFrame.Position)
 	local goal = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.GOAL.CFrame.Position)
-	local path = AJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, CollisionGrid.combineMaps(main, main2))
+	local path = AJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, CollisionGrid.combineMaps({main, main2}))
 	local _path = AJPS.reconstructPath(path, true, true)
 	s = os.clock() - s
 	print(s)

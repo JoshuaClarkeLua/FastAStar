@@ -151,7 +151,7 @@ local function doPath()
 	local s = os.clock()
 	local start = origin:PointToObjectSpace(workspace.START.CFrame.Position)
 	local goal = origin:PointToObjectSpace(workspace.GOAL.CFrame.Position)
-	local colX, colZ = CollisionGrid.combineMaps(mainMap)
+	local colX, colZ = CollisionGrid.combineMaps({mainMap})
 	local path = AStarJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, colX, colZ)
 	s = os.clock() - s
 	print(s)

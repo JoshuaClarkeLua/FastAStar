@@ -1,3 +1,4 @@
+local CollectionService = game:GetService("CollectionService")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Signal = require(ReplicatedStorage.Packages.Signal)
@@ -12,6 +13,95 @@ local Vector2Util = Imports.Vector2Util
 type CollisionMap = CollisionGrid.CollisionMap
 type CollisionGrid = CollisionGrid.CollisionGrid
 
+local function clearParts(): ()
+	local old = workspace:FindFirstChild("Linker_Parts")
+	if old then
+		old:Destroy()
+	end
+	local p = Instance.new("Folder")
+	p.Name = "Linker_Parts"
+	p.Parent = workspace
+end
+
+local function _doPart(col: Color3, pos: Vector2, prev: BasePart?): BasePart
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.Size = Vector3.one
+	p.Position = workspace.Floor1.CFrame:PointToWorldSpace(Vector3.new(pos.X-130, 10, pos.Y-130))
+	p.Color = col
+	p.Parent = workspace:FindFirstChild("Linker_Parts")
+	if prev then
+		local beam = Instance.new("Beam")
+		beam.FaceCamera = true
+		beam.Color = ColorSequence.new(col)
+		beam.Width0 = 2
+		beam.Width1 = 2
+		local a1 = Instance.new("Attachment")
+		a1.Parent = p
+		beam.Attachment0 = a1
+		beam.Parent = p
+		-- local _beam = prev:FindFirstChild("Beam")
+		-- if _beam then
+		-- 	local a2 = Instance.new("Attachment")
+		-- 	a2.Parent = p
+		-- 	_beam.Attachment1 = a2
+		-- end
+		local a2 = Instance.new("Attachment")
+		a2.Parent = prev
+		beam.Attachment1 = a2
+	end
+	return p
+end
+
+local function sortMaps(maps: {string}): ()
+	table.sort(maps, function(a,b)
+		return a < b
+	end)
+end
+
+local function hasSameGroup(linkA: RoomLink, linkB: RoomLink): boolean
+	return linkA == linkB or (linkA.group ~= nil and linkA.group == linkB.group)
+end
+
+local function getMapsName(maps: {string}, noSort: boolean?): string
+	if not noSort then
+		sortMaps(maps)
+	end
+	local name = ''
+	for _, map in ipairs(maps) do
+		name ..= map
+	end
+	return name
+end
+
+local function getMaps(grid: CollisionGrid, maps: {string}): {CollisionMap}
+	local _maps = {}
+	for _, map in ipairs(maps) do
+		local _map = grid:GetMap(map)
+		if not _map then
+			error(`CollisionMap '{map}' does not exist`)
+		end
+		table.insert(_maps, _map)
+	end
+	return _maps
+end
+
+local function getMapData(grid: CollisionGrid, mapsName: {string}, noSort: boolean?): MapData
+	local maps = getMaps(grid, mapsName)
+	local colX, colZ, colByDefault = CollisionGrid.combineMaps(maps)
+	return {
+		maps = maps,
+		name = getMapsName(mapsName, noSort),
+		colX = colX,
+		colZ = colZ,
+		colByDefault = colByDefault,
+	}
+end
+
+local function getLinkKey(link: RoomLink): string
+	return `{link.id}_{link.num}`
+end
+
 local function getLinkKeys(id: string): {string}
 	local keys = {}
 	for i = 0, 1 do
@@ -24,50 +114,53 @@ local function getOtherLinkNum(num: number): number
 	return num == 1 and 0 or 1
 end
 
-local function removeLink(linker, link: RoomLink): ()
-	if link._groupLinks ~= nil then
-		link._groupLinks[link] = nil
-		link._groupLinks = nil
+local function ungroupLink(linker, link: RoomLink): ()
+	if link.group ~= nil then
+		link.group[link] = nil
+		link.group = nil
 	end
-	link.group = nil :: any
 end
 
-local function removeMapLink(linker, map: RoomLinkCollisionMap, link: RoomLink): ()
+local function removeLink(linker, link: RoomLink): ()
+	local key = getLinkKey(link)
+	-- Remove link from Linker
+	linker._links[key] = nil
+	-- Remove link from grid
+	local grid = link.grid
 	-- Remove link from linkByNodeId list
-	map.linksByNodeId[link.nodeId][link.id] = nil
-	if next(map.linksByNodeId[link.nodeId]) then
-		map.linksByNodeId[link.nodeId] = nil
+	grid.linksByNodeId[link.nodeId][key] = nil
+	if next(grid.linksByNodeId[link.nodeId]) then
+		grid.linksByNodeId[link.nodeId] = nil
 	end
 	-- Remove link from map links
-	map.links[link.id] = nil
+	grid.links[key] = nil
 	-- Remove link from group
-	removeLink(linker, link)
+	ungroupLink(linker, link)
 	-- Fire link removed event
 	linker.OnLinkRemoved:Fire(link)
 end
 
 
-local function addLink(linker, link: RoomLink, prevLink: RoomLink): ()
+local function groupLinks(linker, link: RoomLink, prevLink: RoomLink): ()
 	-- Delete group if no links are left
-	local links = prevLink._groupLinks
+	local links = prevLink.group
 	if not links then
 		links = {
 			[prevLink] = true,
 			[link] = true,
 		}
-		prevLink._groupLinks = links
+		prevLink.group = links
 	else
+
 		links[link] = true
 	end
 	--
-	-- Update group id
-	link.group = prevLink.group
-	link._groupLinks = links
+	link.group = links
 end
 
 local function iterateLinks(firstLink: RoomLink, iterator: (link: RoomLink) -> ()): ()
-	if firstLink._groupLinks ~= nil then
-		for link in pairs(firstLink._groupLinks) do
+	if firstLink.group ~= nil then
+		for link in pairs(firstLink.group) do
 			iterator(link)
 		end
 	else
@@ -75,48 +168,51 @@ local function iterateLinks(firstLink: RoomLink, iterator: (link: RoomLink) -> (
 	end
 end
 
-local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, grid: CollisionGrid, toGrid: CollisionGrid): RoomLink
+local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, grid: GridData, toGrid: GridData): RoomLink
 	local self = {
 		id = id,
 		num = num,
+		key = `{id}_{num}`,
 		cost = cost,
 		--
 		pos = nodePos,
 		grid = grid,
-		nodeId = CollisionGrid.GetNodeIdFromPos(grid.Size, nodePos.X, nodePos.Y),
+		nodeId = CollisionGrid.GetNodeIdFromPos(grid.grid.Size, nodePos.X, nodePos.Y),
 		toGrid = toGrid,
 		group = nil,
+		_initGroupResolved = {}, -- [mapsName]: boolean
+		_linkCosts = {},
 	}
 	return self
 end
 
-local function findLink(linker, map: RoomLinkCollisionMap, start: Vector2): RoomLink?
+local function findLink(grid: GridData, start: Vector2, map: MapData): RoomLink?
 	local goals = {}
-	for _, link in pairs(map.links) do
+	for _, link in pairs(grid.links) do
 		table.insert(goals, link.pos)
 	end
-	local reachedGoals = AStarJPS.findReachable(map.gridSize, start, goals, true, map.nodesX, map.nodesZ)
+	local reachedGoals = AStarJPS.findReachable(grid.grid.Size, start, goals, true, map.colX, map.colZ, map.colByDefault)
 	if not reachedGoals or #reachedGoals == 0 then
 		return
 	end
 	local goal = reachedGoals[1]
-	local nodeId = NodeUtil.getNodeId(map.gridSize.X, goal.X, goal.Y)
-	local linkId = next(map.linksByNodeId[nodeId])
-	return map.links[linkId]
+	local nodeId = NodeUtil.getNodeId(grid.grid.Size.Y, goal.X, goal.Y)
+	local linkId = next(grid.linksByNodeId[nodeId])
+	return grid.links[linkId]
 end
 
-local function _setLinkCosts(linker, pos: Vector2, links: {[RoomLink]: any}): ()
+local function _setLinkCosts(linker, pos: Vector2, links: {[RoomLink]: any}, map: MapData): ()
 	local first: RoomLink? = next(links)
 	if not first then
 		error('No links')
 	end
-	-- Find the costs (distance) of each parent 
-	local map = linker:GetMap(first.map)
+	local grid = first.grid
+	-- Find the costs (distance) of each parent
 	local goals = {}
 	for parent in pairs(links) do
 		table.insert(goals, parent.pos)
 	end
-	local _, data = AStarJPS.findReachable(map.gridSize, pos, goals, false, map.nodesX, map.nodesZ)
+	local _, data = AStarJPS.findReachable(grid.grid.Size, pos, goals, false, map.colX, map.colZ, map.colByDefault)
 	if not data then
 		return
 	end
@@ -127,40 +223,62 @@ local function _setLinkCosts(linker, pos: Vector2, links: {[RoomLink]: any}): ()
 	end
 end
 
-local function _doPart(pos: Vector3): BasePart
-	local p = Instance.new("Part")
-	p.Anchored = true
-	p.Size = Vector3.one
-	p.Position = pos
-	p.Transparency = .2
-	p.Parent = workspace
-	return p
+local function getChangedGroups(a: {[any]: any}, b: {[any]: any}, colByDefault): {[number]: any}
+	local groups = {}
+	for groupId,group in pairs(a) do
+		local _group = CollisionGrid.GetGroup(b, groupId, CollisionGrid.OBJECT_TYPE.Collision, colByDefault)
+		if group ~= _group then
+			groups[groupId] = bit32.bxor(group, _group)
+		end
+	end
+	for groupId,group in pairs(b) do
+		if groups[groupId] then
+			continue
+		end
+		local _group = CollisionGrid.GetGroup(a, groupId, CollisionGrid.OBJECT_TYPE.Collision, colByDefault)
+		if group ~= _group then
+			groups[groupId] = bit32.bxor(group, _group)
+		end
+	end
+	return groups
 end
 
-local function triggerMapUpdate(linker, map: RoomLinkCollisionMap): ()
-	if not map._updateScheduled then
-		return
+local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
+	local old = grid._mapData[map.name]
+	-- Return if map wasn't previously loaded
+	if not old then
+		return true
 	end
-	map._updateScheduled = false
-		
-	-- Return if no groups changed
-	if next(map._groupChangesX) == nil and next(map._groupChangesZ) == nil then
-		return
+	if map.colByDefault ~= old.colByDefault then
+		-- Reset all link groups
+		for _, link in pairs(grid.links) do
+			link.group = nil
+			link._initGroupResolved[map.name] = nil
+			link._linkCosts[map.name] = nil
+		end
+		-- Return, the next step in the resolveLinkGroups() function will update the groups
+		return true
 	end
+	local groupChangesX, groupChangesZ = getChangedGroups(old.colX, map.colX, map.colByDefault), nil
+	if next(groupChangesX) == nil then
+		return false
+	end
+	groupChangesZ = getChangedGroups(old.colZ, map.colZ, map.colByDefault)
+	local gridSize = grid.grid.Size
 	
 
 	-- 1. Remove collisions from the changed nodes
 	local changedNodes = {}
-	local _nodesX, _nodesZ = map.nodesX, map.nodesZ
-	local overshoot = map.gridSize.X % 32
+	local _nodesX, _nodesZ = old.colX, old.colZ
+	local overshoot = gridSize.X % 32
 	overshoot = overshoot ~= 0 and 32 - overshoot or 0
-	for groupId, group in pairs(map._groupChangesX) do
+	for groupId, group in pairs(groupChangesX) do
 		-- Add node ids to changedNodes
 		local _group = group
 		-- Calculate the id of the first node in the group
 		local baseNodeId = (groupId - 1) * 32 + 1
 		if overshoot > 0 then -- Accounts for extra nodes at the end of the last group of each row
-			local numGroups = math.ceil(map.gridSize.X / 32)
+			local numGroups = math.ceil(gridSize.X / 32)
 			baseNodeId -= math.floor(groupId / numGroups) * overshoot
 		end
 		_group = group
@@ -175,7 +293,7 @@ local function triggerMapUpdate(linker, map: RoomLinkCollisionMap): ()
 			_nodesX[groupId] = __group
 		end
 	end
-	for groupId, group in pairs(map._groupChangesZ) do
+	for groupId, group in pairs(groupChangesZ) do
 		if _nodesZ[groupId] ~= nil then
 			local __group = bit32.band(_nodesZ[groupId] or 0, bit32.bnot(group))
 			_nodesZ[groupId] = __group
@@ -186,10 +304,10 @@ local function triggerMapUpdate(linker, map: RoomLinkCollisionMap): ()
 	local nodeGroups = {}
 	local nodeId = next(changedNodes)
 	while nodeId ~= nil do
-		local node = Vector2.new(NodeUtil.getPosFromId(map.gridSize.X, nodeId))
+		local node = Vector2.new(NodeUtil.getPosFromId(gridSize.X, nodeId))
 		changedNodes[nodeId] = nil
 		local nodes = {[nodeId] = true}
-		local data = AStarJPS.fill(map.gridSize, node, map.nodesX, map.nodesZ)
+		local data = AStarJPS.fill(gridSize, node, old.colX, old.colZ)
 		for _nodeId in pairs(data.nodesReached) do
 			changedNodes[_nodeId] = nil
 			nodes[_nodeId] = true
@@ -201,36 +319,30 @@ local function triggerMapUpdate(linker, map: RoomLinkCollisionMap): ()
 	-- Get the groups which can reach a node group
 	local affectedGroups = {}
 	for _, nodes in pairs(nodeGroups) do
-		for _, link in pairs(map.links) do
+		for _, link in pairs(grid.links) do
 			if nodes[link.nodeId] and not affectedGroups[link.group] then
-				affectedGroups[link.group] = link
+				affectedGroups[link.group] = true
 			end
 		end
-	end
-	
-
-	-- Update the nodesX and nodesZ
-	local nodesX, nodesZ = CollisionGrid.combineGroups(map._groupChangesX, map._groupChangesZ, table.unpack(map.maps))
-	for gid, g in pairs(nodesX) do
-		map.nodesX[gid] = g
-	end
-	for gid, g in pairs(nodesZ) do
-		map.nodesZ[gid] = g
 	end
 
 	-- Update the groups (make new ones if needed)
 	local goals = {}
 	local queue = {}
-	for _, link in pairs(map.links) do
+	for _, link in pairs(grid.links) do
 		table.insert(goals, link.pos)
 	end
-	for _, link in pairs(affectedGroups) do
+	for group in pairs(affectedGroups) do
+		local link = next(group)
+		if not link then continue end
 		-- Reset their _linkCosts cache
 		iterateLinks(link, function(link: RoomLink)
-			link._linkCosts = {}
+			-- clear cost cache
+			link._linkCosts[map.name] = {}
+			--
 			queue[link] = true
-			removeLink(linker, link)
-			link.group = nil :: any -- HttpService:GenerateGUID(false)
+			ungroupLink(linker, link)
+			link.group = nil
 		end)
 	end
 	-- Update the groups
@@ -238,23 +350,22 @@ local function triggerMapUpdate(linker, map: RoomLinkCollisionMap): ()
 	while pLink do
 		-- Remove from queue
 		queue[pLink] = nil
-		pLink.group = HttpService:GenerateGUID(false)
 		-- Find other links in the group
-		local _, data = AStarJPS.findReachable(map.gridSize, pLink.pos, goals, false, map.nodesX, map.nodesZ)
+		local _, data = AStarJPS.findReachable(gridSize, pLink.pos, goals, false, map.colX, map.colZ)
 		if data then
 			for goalId in pairs(data.goalsReached) do
-				local links = map.linksByNodeId[goalId]
+				local links = grid.linksByNodeId[goalId]
 				if links then
-					for linkId in pairs(links) do
-						if linkId == pLink.linkId then
+					for _, link in pairs(links) do
+						if link == pLink then
 							continue
 						end
-						local link = map.links[linkId]
 						-- Remove from queue
 						queue[link] = nil
-						link._linkCosts[pLink] = data.g[goalId]
+						-- cache cost
+						link._linkCosts[map.name][pLink] = data.g[goalId]
 						-- Add link to pLink group
-						addLink(linker, link, pLink)
+						groupLinks(linker, link, pLink)
 					end
 				end
 			end
@@ -263,72 +374,110 @@ local function triggerMapUpdate(linker, map: RoomLinkCollisionMap): ()
 		pLink = next(queue)
 	end
 
-	map._groupChangesX = {}
-	map._groupChangesZ = {}
+	return true
 end
 
-local function scheduleMapUpdate(linker, map: RoomLinkCollisionMap): ()
-	map._updateScheduled = true
+local function getLinkCosts(linker, groupLink: RoomLink, mapName: string, children: {[RoomLink]: {[RoomLink]: any}}): {[RoomLink]: number}
+	local grid = groupLink.grid
+	-- Get CollisionMaps
+	local map = linker:GetMapData(grid.grid, mapName, true)
+	-- Get costs
+	local costs = {
+		[groupLink] = 0,
+	}
+	local goals = {groupLink.pos}
+	-- Get goals
+	iterateLinks(groupLink, function(link: RoomLink)
+		-- cache costs
+		local cache = link._linkCosts[mapName]
+		if cache and cache[groupLink] then
+			costs[link] = cache[groupLink]
+		elseif children[groupLink][link] then
+			table.insert(goals, link.pos)
+		end
+	end)
+	-- Find goals
+	if #goals > 1 then
+		local _, data = AStarJPS.findReachable(grid.grid.Size, groupLink.pos, goals, false, map.colX, map.colZ, map.colByDefault)
+		iterateLinks(groupLink, function(link: RoomLink)
+			if not costs[link] and children[groupLink][link] then
+				costs[link] = data.g[link.nodeId]
+				-- cache costs
+				local cache = link._linkCosts[mapName]
+				if not cache then
+					cache = {}
+					link._linkCosts[mapName] = cache
+				end
+				cache[groupLink] = costs[link]
+			end
+		end)
+	end
+	return costs
 end
 
-local function onMapChanged(linker, map: RoomLinkCollisionMap, nodes: {Vector2}, addedCollisions: boolean): ()
-	-- 1. Get group ids of node groups that changed
-	local groupsX, groupsZ = {}, {}
-	for _, node in ipairs(nodes) do
-		local groupX = CollisionGrid.GetGroupId(map.gridSize.Y, node.X, node.Y)
-		local groupZ = CollisionGrid.GetGroupId(map.gridSize.X, node.Y, node.X)
-		groupsX[groupX] = true
-		groupsZ[groupZ] = true
-	end
-	-- 2. Combine the groups from each map together
-	local nodesX, nodesZ = CollisionGrid.combineGroups(groupsX, groupsZ, table.unpack(map.maps))
+local function resolveLinkGroups(self, grid: GridData, sortedMapNames: {string}): ()
 
-	-- 3. Save the changes to be processed when the map updates
-	local changed = false
-	local _nodesX, _nodesZ = map.nodesX, map.nodesZ
+	--[[
+		STEP #1
 
-	for groupId in pairs(groupsX) do
-		local _group = bit32.bxor(_nodesX[groupId] or 0, nodesX[groupId] or 0)
-		if _group ~= 0 then
-			changed = true
-			local _other = map._groupChangesX[groupId]
-			if _other then
-				map._groupChangesX[groupId] = bit32.bor(_other, _group)
-			else
-				map._groupChangesX[groupId] = _group
-			end
-		end
-	end
-	for groupId in pairs(groupsZ) do
-		local _group = bit32.bxor(_nodesZ[groupId] or 0, nodesZ[groupId] or 0)
-		if _group ~= 0 then
-			changed = true
-			local _other = map._groupChangesZ[groupId]
-			if _other then
-				map._groupChangesZ[groupId] = bit32.bor(_other, _group)
-			else
-				map._groupChangesZ[groupId] = _group
-			end
-		end
-	end
-	-- 4. Schedule map update
+		Resolve groups which may have been updated
+	]]
+	local map = getMapData(grid.grid, sortedMapNames, true)
+	local changed = triggerMapUpdate(self, grid, map)
+
 	if changed then
-		scheduleMapUpdate(linker, map)
+		grid._mapData[map.name] = map
 	end
-end
 
-local function validateCollisionMaps(...: CollisionMap): CollisionGrid
-	local grid
-	for _, map in ipairs({...}) do
-		if type(map) ~= "table" then
-			error('Invalid CollisionMap')
-		elseif grid and map.Grid ~= grid then
-			error('Invalid Linker map: CollisionMaps which share a Linker map must be on the same CollisionGrid')
-		else
-			grid = map.Grid
+	--[[
+		STEP #2
+
+		Resolve all groups for links which have never been resolved on this map combination
+	]]
+	local goals: {Vector2}
+	for _, link in pairs(grid.links) do
+		if not link._initGroupResolved[map.name] then
+			link._initGroupResolved[map.name] = true
+			-- Create goals table if it doesn't exist
+			if goals == nil then
+				goals = {}
+				for _, link in pairs(grid.links) do
+					table.insert(goals, link.pos)
+				end
+			end
+			-- Find all links this link can reach
+			local _, data = AStarJPS.findReachable(grid.grid.Size, link.pos, goals, false, map.colX, map.colZ, map.colByDefault)
+			local groupLink: RoomLink
+			local ungroupedLinks = {}
+			for nodeId in pairs(data.goalsReached) do
+				local links = grid.linksByNodeId[nodeId]
+				if links then
+					for _, otherLink in pairs(links) do
+						if otherLink == link then
+							continue
+						end
+						if otherLink._initGroupResolved[map.name] then
+							if not groupLink then
+								groupLink = otherLink
+							end
+						else
+							otherLink._initGroupResolved[map.name] = true
+							table.insert(ungroupedLinks, otherLink)
+						end
+					end
+				end
+			end
+			-- Group all the ungrouped links
+			if groupLink ~= nil then
+				table.insert(ungroupedLinks, link)
+			else
+				groupLink = link
+			end
+			for _, otherLink in pairs(ungroupedLinks) do
+				groupLinks(self, otherLink, groupLink)
+			end
 		end
 	end
-	return grid
 end
 
 
@@ -341,6 +490,7 @@ function Linker.new()
 	}, Linker)
 
 	self._grids = {} :: {[string]: RoomLinkCollisionMap} -- mapName -> RoomLinkCollisionMap
+	self._links = {} :: {[string]: RoomLink} -- linkId -> RoomLink
 	
 	return self
 end
@@ -352,11 +502,15 @@ function Linker:Destroy(): ()
 end
 
 function Linker:_AddGrid(grid: CollisionGrid): ()
+	if self._grids[grid.Id] then
+		error(`Grid '{grid.Id}' already exists!`)
+	end
 	local gridData = {
 		trove = Trove.new(),
 		grid = grid,
 		links = {}, -- {[string]: RoomLink}
 		linksByNodeId = {}, -- {[nodeId]: {[string]: true}}
+		_mapData = {},
 	}
 	self._grids[grid.Id] = gridData
 end
@@ -373,31 +527,35 @@ function Linker:GetGridData(id: string): GridData?
 	return self._grids[id]
 end
 
-function Linker:_GetOtherLink(link: RoomLink): RoomLink
-	local mapName = link.toMap
-	local key = `{link.id}_{getOtherLinkNum(link.num)}`
-	local map = self:GetMap(mapName)
-	return map.links[key]
+function Linker:GetMapData(grid: CollisionGrid, mapName: string): MapData?
+	local gridData = self:GetGridData(grid.Id)
+	if not gridData then
+		return
+	end
+	return gridData._mapData[mapName]
 end
 
-function Linker:FindLinkFromPos(map: string, pos: Vector2): RoomLink?
-	local _map = self:GetMap(map)
-	-- Update map
-	triggerMapUpdate(self, _map)
+function Linker:_GetOtherLink(link: RoomLink): RoomLink
+	local key = `{link.id}_{getOtherLinkNum(link.num)}`
+	return self._links[key]
+end
+
+function Linker:_FindLinkFromPos(grid: CollisionGrid, pos: Vector2, map: MapData): RoomLink?
+	local gridData = self:GetGridData(grid.Id)
+	if not gridData then
+		return
+	end
+
 	-- Find link group
-	local nodeId = NodeUtil.getNodeId(_map.gridSize.X, pos.X, pos.Y)
-	local linksByNodeId = _map.linksByNodeId[nodeId]
+	local nodeId = NodeUtil.getNodeId(grid.Size.X, pos.X, pos.Y)
+	local linksByNodeId = gridData.linksByNodeId[nodeId]
 	-- Check if there are links at the same node
 	if linksByNodeId then
 		local linkId = next(linksByNodeId)
-		return _map.links[linkId]
+		return gridData.links[linkId]
 	end
 	-- Otherwise find a link that is reachable from the node
-	return findLink(self, _map, pos)
-end
-
-function Linker:_FindLinkGroup(link: RoomLink, maps: {string}): ()
-	
+	return findLink(gridData, pos, map)
 end
 
 do
@@ -406,39 +564,45 @@ do
 		_linkNum += 1
 		return _linkNum % 2
 	end
-	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid): RoomLink?
-		if not GridUtil.isInGrid(fromGrid.Size.X, fromGrid.Size.Y, fromPos.X, fromPos.Y) then
-			warn('fromPos is not in grid')
-			return
-		end
-		if not GridUtil.isInGrid(toGrid.Size.X, toGrid.Size.Y, fromPos.X, fromPos.Y) then
-			warn('toPos is not in grid')
-			return
-		end
-		-- TODO: Update grid
-		-- triggerMapUpdate(self, map)
+	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid): RoomLink
 
 		-- Create link
 		local num = getLinkNum()
-		local link = newLink(self, id, num, cost, fromPos, fromGrid, toGrid)
+		local gridData = self:GetGridData(fromGrid.Id)
+		local link = newLink(self, id, num, cost, fromPos, gridData, self:GetGridData(toGrid.Id))
 
+		-- TODO: Do this in the _FindLinkPath function instead so you don't need to do it for every map combination
+		--[[
+			IDEA:
+			When calling _FindLinkPath with a map combination that hasn't been resolved before,
+			- Invoke function called resolveLinkGroups(grid, maps)
+				1. If this function was never called on this map combination before
+					1. Find all link groups using findReachable
+					2. Add links to groups
+					3. Cache group configuration under the links per-map
+						ex: link.group['ordered_map_names'] = {
+							maps = {[mapName]: true},
+							links = {[RoomLink]: true},
+						} -> group
 
-		-- Find link group
-		local linkGroup: RoomLink = self:FindLinkFromPos(fromGrid, fromPos)
-		-- Add link to link group
-		if linkGroup ~= nil then
-			addLink(self, link, linkGroup)
-		end
-		-- Add link to map
-		local nodeId = NodeUtil.getNodeId(map.gridSize.X, fromPos.X, fromPos.Y)
-		local linksByNodeId = map.linksByNodeId[nodeId]
-		local key = `{id}_{num}`
-		map.links[key] = link
+				2. If this function has been called on this map combination before
+					1. Check if any changes were done on any of the maps in the combination
+					2. If not, return
+					3. Run function similar to triggerMapUpdate to update the affected groups in the map combination
+					
+		]]
+
+		-- Add link to grid
+		local nodeId = NodeUtil.getNodeId(fromGrid.Size.X, fromPos.X, fromPos.Y)
+		local linksByNodeId = gridData.linksByNodeId[nodeId]
+		local key = getLinkKey(link)
+		self._links[key] = link
+		gridData.links[key] = link
 		if linksByNodeId then
-			linksByNodeId[key] = true
+			linksByNodeId[key] = link
 		else
-			map.linksByNodeId[nodeId] = {
-				[key] = true,
+			gridData.linksByNodeId[nodeId] = {
+				[key] = link,
 			}
 		end
 		return link
@@ -447,52 +611,57 @@ end
 
 function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?, bidirectional: boolean?): ()
 	assert(cost, 'Cost must be a number')
+	assert(self._links[`{id}_0`] == nil, 'A Link with this id already exists')
+	toGrid = toGrid or fromGrid
+	if not GridUtil.isInGrid(fromGrid.Size.X, fromGrid.Size.Y, fromPos.X, fromPos.Y) then
+		warn('fromPos is not in grid')
+		return
+	end
+	if not GridUtil.isInGrid(toGrid.Size.X, toGrid.Size.Y, toPos.X, toPos.Y) then
+		warn('toPos is not in grid')
+		return
+	end
 	-- Add grids
-	if not self:GetGridData(fromGrid) then
+	if not self:GetGridData(fromGrid.Id) then
 		self:_AddGrid(fromGrid)
 	end
-	if toGrid and not self:GetGridData(toGrid) then
+	if toGrid ~= fromGrid and not self:GetGridData(toGrid.Id) then
 		self:_AddGrid(toGrid)
 	end
 	fromPos = Vector2Util.floor(fromPos)
 	toPos = Vector2Util.floor(toPos)
 	bidirectional = bidirectional ~= false
-	toGrid = toGrid or fromGrid
 	-- Add links
-	local linkA = self:_AddLink(id, cost, fromPos, fromGrid, toGrid)
-	if not linkA then
-		return
-	end
-	local linkB = self:_AddLink(id, bidirectional and cost or math.huge, toPos, toGrid, fromGrid)
-	if not linkB then
-		removeLink(self, linkA)
-		return
-	end
+	self:_AddLink(id, cost, fromPos, fromGrid, toGrid)
+	self:_AddLink(id, bidirectional and cost or math.huge, toPos, toGrid, fromGrid)
 end
 
 function Linker:RemoveLink(id: string): ()
 	for _, key in ipairs(getLinkKeys(id)) do
-		for _, map in pairs(self._maps) do
-			if map.links[key] then
-				removeMapLink(self, map, map.links[key])
-			end
-		end
+		removeLink(self, self._links[key])
 	end
 end
 
-function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?): (RoomLink?, {[RoomLink]: RoomLink}?)
+function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos: Vector2, fromGrid: GridData, toGrid: GridData): (RoomLink?, {[RoomLink]: RoomLink}?)
+	local mapName = getMapsName(sortedMapNames, true)
+	-- Resolve any unresolved link groups
+	for _, gridData in pairs(self._grids) do
+		resolveLinkGroups(self, fromGrid, sortedMapNames)
+	end
+	-- Get map data
+	local fromMap = self:GetMapData(fromGrid.grid, mapName)
+	local toMap = self:GetMapData(toGrid.grid, mapName)
 	--
-	local startLink = self:FindLinkFromPos(fromMap, fromPos) -- Triggers a map update
-	local goalLink = self:FindLinkFromPos(toMap, toPos)
+	local startLink = self:_FindLinkFromPos(fromGrid.grid, fromPos, fromMap) -- Triggers a map update
+	local goalLink = self:_FindLinkFromPos(toGrid.grid, toPos, toMap)
 	-- Return if link is in goalGroup
 	if not startLink or not goalLink then
 		return
 	end
-	if startLink.group == goalLink.group then
+	if hasSameGroup(startLink, goalLink) then
 		return startLink
 	end
 	
-	local goalGroup = goalLink.group
 
 	local queue = {startLink} -- {RoomLink}
 	local parents = {}
@@ -511,7 +680,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 	--[[
 		STEP #1
 
-		Trace all possible link paths and save children
+		Trace all possible link paths and save last children
 	]]
 	local lastChildren = {}
 	while #queue > 0 do
@@ -529,7 +698,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 			-- Get link that parentLink leads to
 			local nextLink = self:_GetOtherLink(parentLink)
 			-- Return if nextLink is closed or in the same group as its parent
-			if closed[nextLink] or nextLink.group == parentLink.group then
+			if closed[nextLink] or hasSameGroup(nextLink, parentLink) then
 				return
 			end
 			closed[nextLink] = true
@@ -538,7 +707,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 			addParent(parents, nextLink, parentLink)
 
 			-- Insert nextLink in finalLinks if it is in the goal group
-			if nextLink.group == goalGroup then
+			if hasSameGroup(nextLink, goalLink) then
 				table.insert(lastChildren, nextLink)
 				return
 			end
@@ -557,6 +726,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 	closed = {}
 	queue = {}
 	local gTable = {} -- [RoomLink]: number
+	local first = {}
 	local children = {}
 	while #lastChildren > 0 do
 		local child = table.remove(lastChildren, 1)
@@ -567,8 +737,9 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 		for parent in pairs(_parents) do
 			addParent(children, parent, child)
 			if not parents[parent] then
-				-- Only add to queue if link has no children (i.e. is a start link)
+				-- Only add to queue if link has no parents (i.e. is a start link)
 				table.insert(queue, parent)
+				first[parent] = true
 				gTable[parent] = 0
 			end
 			if closed[parent] then continue end
@@ -579,7 +750,9 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 	if next(gTable) == nil then
 		return
 	end
-	_setLinkCosts(self, fromPos, gTable) -- Set first links' costs
+	
+
+	_setLinkCosts(self, fromPos, gTable, fromMap) -- Set first links' costs
 
 
 	--[[
@@ -592,66 +765,57 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 	local finalLinks: {[RoomLink]: number} = {}
 	while #queue > 0 do
 		local groupLink = table.remove(queue, 1)
-		local map = self:GetMap(groupLink.map)
 		local costs
-		if groupLink ~= startLink and children[groupLink] then
-			costs = {
-				[groupLink] = 0,
-			}
-			local goals = {groupLink.pos}
-			-- Get goals
-			iterateLinks(groupLink, function(link: RoomLink)
-				-- if link == groupLink then return end
-				if link._linkCosts[groupLink] then
-					costs[link] = link._linkCosts[groupLink]
-				elseif children[groupLink][link] then
-					table.insert(goals, link.pos)
+		if not first[groupLink] and children[groupLink] then
+			costs = getLinkCosts(self, groupLink, mapName, children)
+			do
+				local _costs = {}
+				for link, cost in pairs(costs) do
+					_costs[link.id] = cost
 				end
-			end)
-			-- Find goals
-			if #goals > 1 then
-				local _, data = AStarJPS.findReachable(map.gridSize, groupLink.pos, goals, false, map.nodesX, map.nodesZ)
-				iterateLinks(groupLink, function(link: RoomLink)
-					if not costs[link] and (link == groupLink or children[groupLink][link]) then
-						costs[link] = data.g[link.nodeId]
-						link._linkCosts[groupLink] = costs[link]
-					end
-				end)
 			end
 		else
 			costs = gTable
 		end
 		iterateLinks(groupLink, function(parentLink: RoomLink)
-			if not children[parentLink] or not costs[parentLink] or closed[parentLink] then
+			if closed[parentLink] or not children[parentLink] or not costs[parentLink] then
 				return
 			end
 
 			-- Update parentLink
 			local _g
-			if groupLink ~= startLink then
+			if parentLink ~= groupLink and not first[groupLink] then
 				_g = gTable[groupLink] + costs[parentLink]
-				if _g < (gTable[parentLink] or math.huge) then
+				if not gTable[parentLink] or _g < gTable[parentLink] then
 					parents[parentLink] = groupLink
 					gTable[parentLink] = _g
 				end
 			else
-				_g = costs[parentLink]
+				_g = gTable[parentLink] or costs[parentLink]
 			end
 
 			-- Get link that parentLink leads to
 			local nextLink = self:_GetOtherLink(parentLink)
-			-- Return if nextLink is not in parentLink's children, is closed or in the same group as its parent
-			if not children[parentLink][nextLink] or closed[nextLink] or nextLink.group == parentLink.group then
+
+			-- Return if nextLink is not in parentLink's children or in the same group as its parent
+			if not children[parentLink][nextLink] or hasSameGroup(nextLink, parentLink) then
+				return
+			end
+
+			-- Update nextLink parent if it is better
+			if not gTable[nextLink] or _g + parentLink.cost < gTable[nextLink] then
+				parents[nextLink] = parentLink
+				gTable[nextLink] = _g + parentLink.cost
+			end
+
+			-- Return if nextLink was already added to the queue
+			if closed[nextLink] then
 				return
 			end
 			closed[nextLink] = true
 
-			-- Add parentLink to nextLink
-			parents[nextLink] = parentLink
-			gTable[nextLink] = _g + parentLink.cost
-
 			-- Insert nextLink in finalLinks if it is in the goal group
-			if nextLink.group == goalGroup then
+			if hasSameGroup(nextLink, goalLink) then
 				finalLinks[nextLink] = 0
 				return
 			end
@@ -672,7 +836,7 @@ function Linker:_FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string,
 	if not next(finalLinks) then
 		return
 	end
-	_setLinkCosts(self, toPos, finalLinks)
+	_setLinkCosts(self, toPos, finalLinks, toMap)
 	local lowestG: number = math.huge
 	local finalLink: RoomLink
 	for link, cost in pairs(finalLinks) do
@@ -703,32 +867,27 @@ end
 	@param toMap string? -- The map to end at. If nil, fromMap is used.
 	@return (boolean, LinkPath) -- (isReachable, path)
 ]=]
-function Linker:FindLinkPath(fromPos: Vector2, toPos: Vector2, fromMap: string, toMap: string?): (boolean, LinkPath)
+function Linker:FindLinkPath(mapNames: {string}, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?): (boolean, LinkPath)
 	fromPos = Vector2Util.floor(fromPos)
 	toPos = Vector2Util.floor(toPos)
-	if not toMap then
-		toMap = fromMap
+	if not toGrid then
+		toGrid = fromGrid
 	end
-	local _fromMap = self:GetMap(fromMap)
-	local _toMap = self:GetMap(toMap)
-	if not _fromMap then
-		error(`Map '{fromMap}' does not exist`)
-	end
-	if not _toMap then
-		error(`Map '{toMap}' does not exist`)
-	end
-	if not GridUtil.isInGrid(_fromMap.gridSize.X, _fromMap.gridSize.Y, fromPos.X, fromPos.Y) then
+	if not GridUtil.isInGrid(fromGrid.Size.X, fromGrid.Size.Y, fromPos.X, fromPos.Y) then
 		return false, {}
 	end
-	if not GridUtil.isInGrid(_toMap.gridSize.X, _toMap.gridSize.Y, toPos.X, toPos.Y) then
+	if not GridUtil.isInGrid(toGrid.Size.X, toGrid.Size.Y, toPos.X, toPos.Y) then
 		return false, {}
 	end
+	local fromGridData = self:GetGridData(fromGrid.Id)
+	local toGridData = self:GetGridData(toGrid.Id)
 	-- Check if one of the maps has no links
-	if next(_fromMap.links) == nil or next(_toMap.links) == nil then
+	if next(fromGridData.links) == nil or next(toGridData.links) == nil then
 		return true, {} -- Return true because it may still have a path
 	end
 	-- Find all possible paths
-	local goalLink, parents = self:_FindLinkPath(fromPos, toPos, fromMap, toMap)
+	sortMaps(mapNames) -- sort the map names
+	local goalLink, parents = self:_FindLinkPath(mapNames, fromPos, toPos, fromGridData, toGridData)
 	if not goalLink then
 		return false, {}
 	end
@@ -764,12 +923,15 @@ end
 export type RoomLink = {
 	id: string,
 	num: number,
+	key: string,
 	cost: number,
 	pos: Vector2,
 	nodeId: number,
-	grid: CollisionGrid,
-	toGrid: CollisionGrid,
+	grid: GridData,
+	toGrid: GridData,
 	group: {[RoomLink]: true}?,
+	_initGroupResolved: {[string]: true}, -- map_combination_name -> true
+	_linkCosts: {[string]: {[RoomLink]: number}},
 }
 type RoomLinkCollisionMap = {
 	Grid: CollisionGrid,
@@ -792,7 +954,9 @@ export type GridData = {
 	grid: CollisionGrid,
 	links: {[string]: RoomLink},
 	linksByNodeId: {[number]: {[string]: true}},
+	_mapData: {[string]: MapData}
 }
 export type LinkPath = {RoomLink}
 export type Linker = typeof(Linker.new(...))
+type MapData = typeof(getMapData(...))
 return Linker

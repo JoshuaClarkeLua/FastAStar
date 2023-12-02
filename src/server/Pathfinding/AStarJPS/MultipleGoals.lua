@@ -1,3 +1,4 @@
+local Workspace = game:GetService("Workspace")
 local Imports = require(script.Parent.Parent.Imports)
 local Vector2Util = Imports.Vector2Util
 local AJPSUtil = require(script.Parent.AJPSUtil)

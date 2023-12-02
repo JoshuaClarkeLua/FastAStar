@@ -217,7 +217,7 @@ local function triggerMapUpdate(linker, map: RoomLinkCollisionMap): ()
 	
 
 	-- Update the nodesX and nodesZ
-	local nodesX, nodesZ = CollisionGrid.combineGroups(map._groupChangesX, map._groupChangesZ, table.unpack(map.maps))
+	local nodesX, nodesZ = CollisionGrid.combineGroups(map._groupChangesX, map._groupChangesZ, map.maps)
 	for gid, g in pairs(nodesX) do
 		map.nodesX[gid] = g
 	end
@@ -288,7 +288,7 @@ local function onMapChanged(linker, map: RoomLinkCollisionMap, nodes: {Vector2},
 		groupsZ[groupZ] = true
 	end
 	-- 2. Combine the groups from each map together
-	local nodesX, nodesZ = CollisionGrid.combineGroups(groupsX, groupsZ, table.unpack(map.maps))
+	local nodesX, nodesZ = CollisionGrid.combineGroups(groupsX, groupsZ, map.maps)
 
 	-- 3. Save the changes to be processed when the map updates
 	local changed = false
@@ -359,6 +359,7 @@ function Linker:Destroy(): ()
 end
 
 function Linker:AddMap(mapName: string, gridSize: Vector2, mainMap: CollisionMap, ...: CollisionMap): ()
+	warn("TODO: Change the maps to a table")
 	if self._maps[mapName] then
 		error(`Map '{mapName}' already exists`)
 	end
