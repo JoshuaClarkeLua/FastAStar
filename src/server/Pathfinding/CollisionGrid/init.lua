@@ -4,6 +4,7 @@ local Imports = require(script.Parent.Imports)
 local ParallelJobHandler = require(ReplicatedStorage.Packages.ParallelJobHandler)
 local Promise = require(ReplicatedStorage.Packages.Promise)
 local Signal = require(ReplicatedStorage.Packages.Signal)
+local Trove = require(ReplicatedStorage.Packages.Trove)
 local Vector2Util = Imports.Vector2Util
 local Vector3Util = Imports.Vector3Util
 local Bit32Util = require(script.Parent.Bit32Util)
@@ -53,6 +54,7 @@ CollisionGrid.__index = CollisionGrid
 CollisionGrid.OBJECT_TYPE = OBJ_TYPE
 CollisionGrid.DEFAULT_MAP = newMap()
 CollisionGrid.DEFAULT_MAP_COL = newMap(true)
+CollisionGrid.HANDLER_SCRIPT = script.Handler
 
 
 local function addMapNodes(self, nodes, _map, type, invert): ()
@@ -160,7 +162,13 @@ function CollisionGrid.newAsync(
 	handler: ParallelJobHandler.JobHandler?
 ): CollisionGrid
 	origin = origin * CFrame.new(-gridSize.X / 2, 0, -gridSize.Y / 2)
-	local _handler = handler or ParallelJobHandler.new(script.Handler, 64, false)
+	local trove = Trove.new()
+	local _handler
+	if not handler then
+		_handler = trove:Add(ParallelJobHandler.new(script.Handler, 64, false))
+	else
+		_handler = handler
+	end
 	if not _handler.IsReady then
 		_handler.OnReady:Wait()
 	end
@@ -172,11 +180,12 @@ function CollisionGrid.newAsync(
 		queued = {} :: { [string]: ObjectData }, -- [id]: ObjectData
 		objects = {} :: { [string]: Object }, -- [id]: Object
 		--
-		OnMapAdded = Signal.new(), -- (mapName: string, map: CollisionMap)
-		OnMapRemoved = Signal.new(), -- (mapName: string)
-		OnMapChanged = Signal.new(), -- (mapName: string, nodes: {Vector2}, isCollision: boolean)
-		_OnResume = Signal.new(),
+		OnMapAdded = trove:Add(Signal.new()), -- (mapName: string, map: CollisionMap)
+		OnMapRemoved = trove:Add(Signal.new()), -- (mapName: string)
+		OnMapChanged = trove:Add(Signal.new()), -- (mapName: string, nodes: {Vector2}, isCollision: boolean)
+		_OnResume = Signal.new(), -- added to trove below
 		--
+		_trove = trove,
 		_handler = _handler,
 		_job = _handler:NewJob("CollisionGrid"),
 		_paused = 0, -- Keeps track of times PauseAsync is called
@@ -185,8 +194,19 @@ function CollisionGrid.newAsync(
 		_numGroupsX = math.ceil(gridSize.X / 32),
 		_numGroupsZ = math.ceil(gridSize.Y / 32),
 	}, CollisionGrid)
+
+	trove:Add(function()
+		self._OnResume:Fire()
+		self._OnResume:Destroy()
+	end)
+
 	-- Setup job
 	local job = self._job
+	if handler then -- No need if handler is nil (handler will get destroyed instead)
+		trove:Add(function()
+			_handler:Remove(self._job)
+		end)
+	end
 	job:SetSharedTable(
 		"Data",
 		SharedTable.new({
@@ -194,6 +214,9 @@ function CollisionGrid.newAsync(
 			gridSize = gridSize,
 		})
 	)
+	trove:Add(function()
+		(self._job :: ParallelJobHandler.Job):SetSharedTable("Data", nil)
+	end)
 
 	-- Setup Job functions
 	local function GetNodesInBox(actor): ()
@@ -235,11 +258,7 @@ function CollisionGrid.newAsync(
 end
 
 function CollisionGrid:Destroy(): ()
-	(self._job :: ParallelJobHandler.Job):SetSharedTable("Data", nil)
-	self._handler:Remove(self._job)
-	self._handler:Destroy()
-	self._OnResume:Fire()
-	self._OnResume:Destroy()
+	self._trove:Destroy()
 end
 
 function CollisionGrid:PauseAsync(): ()

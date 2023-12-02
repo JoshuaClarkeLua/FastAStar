@@ -150,12 +150,13 @@ local function iterateLinks(mapName: string, firstLink: RoomLink, iterator: (lin
 	end
 end
 
-local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, grid: GridData, toGrid: GridData): RoomLink
+local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, grid: GridData, toGrid: GridData, label: string?): RoomLink
 	local self = {
 		id = id,
 		num = num,
 		key = `{id}_{num}`,
 		cost = cost,
+		label = label,
 		--
 		pos = nodePos,
 		grid = grid,
@@ -544,12 +545,12 @@ do
 		_linkNum += 1
 		return _linkNum % 2
 	end
-	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid): RoomLink
+	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid, label: string?): RoomLink
 
 		-- Create link
 		local num = getLinkNum()
 		local gridData = self:GetGridData(fromGrid.Id)
-		local link = newLink(self, id, num, cost, fromPos, gridData, self:GetGridData(toGrid.Id))
+		local link = newLink(self, id, num, cost, fromPos, gridData, self:GetGridData(toGrid.Id), label)
 
 		-- Add link to grid
 		local nodeId = NodeUtil.getNodeId(fromGrid.Size.X, fromPos.X, fromPos.Y)
@@ -568,7 +569,7 @@ do
 	end
 end
 
-function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?, bidirectional: boolean?): ()
+function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?, bidirectional: boolean?, label: string?): ()
 	assert(cost, 'Cost must be a number')
 	assert(self._links[`{id}_0`] == nil, 'A Link with this id already exists')
 	toGrid = toGrid or fromGrid
@@ -591,8 +592,8 @@ function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vecto
 	toPos = Vector2Util.floor(toPos)
 	bidirectional = bidirectional ~= false
 	-- Add links
-	self:_AddLink(id, cost, fromPos, fromGrid, toGrid)
-	self:_AddLink(id, bidirectional and cost or math.huge, toPos, toGrid, fromGrid)
+	self:_AddLink(id, cost, fromPos, fromGrid, toGrid, label)
+	self:_AddLink(id, bidirectional and cost or math.huge, toPos, toGrid, fromGrid, label)
 end
 
 function Linker:RemoveLink(id: string): ()
@@ -884,6 +885,7 @@ export type RoomLink = {
 	num: number,
 	key: string,
 	cost: number,
+	label: string?,
 	pos: Vector2,
 	nodeId: number,
 	grid: GridData,
