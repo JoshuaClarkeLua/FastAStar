@@ -17,8 +17,15 @@ local function sortMaps(maps: {string}): ()
 	end)
 end
 
-local function hasSameGroup(linkA: RoomLink, linkB: RoomLink): boolean
-	return linkA == linkB or (linkA.group ~= nil and linkA.group == linkB.group)
+local function getGroup(mapName: string, link: RoomLink): {[RoomLink]: true}?
+	local group = link._groups[mapName]
+	return group and group ~= true and group or nil
+end
+
+local function hasSameGroup(mapName: string, linkA: RoomLink, linkB: RoomLink): boolean
+	local gA = getGroup(mapName, linkA)
+	local gB = getGroup(mapName, linkB)
+	return linkA == linkB or (gA ~= nil and gA == gB)
 end
 
 local function getMapsName(maps: {string}, noSort: boolean?): string
@@ -48,7 +55,6 @@ local function getMapData(grid: CollisionGrid, mapsName: {string}, noSort: boole
 	local maps = getMaps(grid, mapsName)
 	local colX, colZ, colByDefault = CollisionGrid.combineMaps(maps)
 	return {
-		maps = maps,
 		name = getMapsName(mapsName, noSort),
 		colX = colX,
 		colZ = colZ,
@@ -72,10 +78,18 @@ local function getOtherLinkNum(num: number): number
 	return num == 1 and 0 or 1
 end
 
-local function ungroupLink(linker, link: RoomLink): ()
-	if link.group ~= nil then
-		link.group[link] = nil
-		link.group = nil :: any
+local function ungroupLink(linker, link: RoomLink, mapName: string?): ()
+	if mapName then
+		local group = getGroup(mapName, link)
+		if group then
+			group[link] = nil
+		end
+		link._groups[mapName] = nil -- Still set to nil (getGroup returns nil if link._groups[mapName] == true)
+	else
+		for name, group in pairs(link._groups) do
+			group[link] = nil
+			link._groups[name] = nil
+		end
 	end
 end
 
@@ -94,31 +108,41 @@ local function removeLink(linker, link: RoomLink): ()
 	grid.links[key] = nil
 	-- Remove link from group
 	ungroupLink(linker, link)
+	-- Remove link cost cache
+	for _, otherLink in pairs(grid.links) do
+		if otherLink == link then continue end
+		for _, cache in pairs(otherLink._linkCosts) do
+			cache[otherLink] = nil
+		end
+	end
 	-- Fire link removed event
 	linker.OnLinkRemoved:Fire(link)
 end
 
 
-local function groupLinks(linker, link: RoomLink, prevLink: RoomLink): ()
+local function groupLinks(linker, mapName: string, link: RoomLink, prevLink: RoomLink): ()
+	if link == prevLink then
+		return
+	end
 	-- Delete group if no links are left
-	local links = prevLink.group
+	local links = getGroup(mapName, prevLink)
 	if not links then
 		links = {
 			[prevLink] = true,
 			[link] = true,
 		}
-		prevLink.group = links
+		prevLink._groups[mapName] = links
 	else
-
 		links[link] = true
 	end
 	--
-	link.group = links
+	link._groups[mapName] = links
 end
 
-local function iterateLinks(firstLink: RoomLink, iterator: (link: RoomLink) -> ()): ()
-	if firstLink.group ~= nil then
-		for link in pairs(firstLink.group) do
+local function iterateLinks(mapName: string, firstLink: RoomLink, iterator: (link: RoomLink) -> ()): ()
+	local group = getGroup(mapName, firstLink)
+	if group ~= nil then
+		for link in pairs(group) do
 			iterator(link)
 		end
 	else
@@ -137,8 +161,7 @@ local function newLink(linker, id: string, num: number, cost: number, nodePos: V
 		grid = grid,
 		nodeId = CollisionGrid.GetNodeIdFromPos(grid.grid.Size, nodePos.X, nodePos.Y),
 		toGrid = toGrid,
-		group = nil,
-		_initGroupResolved = {}, -- [mapsName]: boolean
+		_groups = {}, -- [mapsName]: {[RoomLink]: true} | true
 		_linkCosts = {},
 	}
 	return self
@@ -210,8 +233,7 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 	if map.colByDefault ~= old.colByDefault then
 		-- Reset all link groups
 		for _, link in pairs(grid.links) do
-			link.group = nil
-			link._initGroupResolved[map.name] = nil
+			link._groups[map.name] = nil
 			link._linkCosts[map.name] = nil
 		end
 		-- Return, the next step in the resolveLinkGroups() function will update the groups
@@ -278,8 +300,10 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 	local affectedGroups = {}
 	for _, nodes in pairs(nodeGroups) do
 		for _, link in pairs(grid.links) do
-			if nodes[link.nodeId] and not affectedGroups[link.group] then
-				affectedGroups[link.group] = true
+			local group = getGroup(map.name, link)
+			-- Node may not be in a group, add it anyways so that it can get processed
+			if nodes[link.nodeId] and (not group or not affectedGroups[group]) then
+				affectedGroups[group or link] = link
 			end
 		end
 	end
@@ -290,17 +314,15 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 	for _, link in pairs(grid.links) do
 		table.insert(goals, link.pos)
 	end
-	for group in pairs(affectedGroups) do
-		local link = next(group)
-		if not link then continue end
+	for _, link in pairs(affectedGroups) do
 		-- Reset their _linkCosts cache
-		iterateLinks(link, function(link: RoomLink)
+		iterateLinks(map.name, link, function(link: RoomLink)
 			-- clear cost cache
 			link._linkCosts[map.name] = {}
 			--
 			queue[link] = true
-			ungroupLink(linker, link)
-			link.group = nil
+			ungroupLink(linker, link, map.name)
+			link._groups[map.name] = nil
 		end)
 	end
 	-- Update the groups
@@ -323,7 +345,7 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 						-- cache cost
 						link._linkCosts[map.name][pLink] = data.g[goalId]
 						-- Add link to pLink group
-						groupLinks(linker, link, pLink)
+						groupLinks(linker, map.name, link, pLink)
 					end
 				end
 			end
@@ -345,7 +367,7 @@ local function getLinkCosts(linker, groupLink: RoomLink, mapName: string, childr
 	}
 	local goals = {groupLink.pos}
 	-- Get goals
-	iterateLinks(groupLink, function(link: RoomLink)
+	iterateLinks(mapName, groupLink, function(link: RoomLink)
 		-- cache costs
 		local cache = link._linkCosts[mapName]
 		if cache and cache[groupLink] then
@@ -357,7 +379,7 @@ local function getLinkCosts(linker, groupLink: RoomLink, mapName: string, childr
 	-- Find goals
 	if #goals > 1 then
 		local _, data = AStarJPS.findReachable(grid.grid.Size, groupLink.pos, goals, false, map.colX, map.colZ, map.colByDefault)
-		iterateLinks(groupLink, function(link: RoomLink)
+		iterateLinks(mapName, groupLink, function(link: RoomLink)
 			if not costs[link] and children[groupLink][link] then
 				costs[link] = data.g[link.nodeId]
 				-- cache costs
@@ -394,8 +416,8 @@ local function resolveLinkGroups(self, grid: GridData, sortedMapNames: {string})
 	]]
 	local goals: {Vector2}
 	for _, link in pairs(grid.links) do
-		if not link._initGroupResolved[map.name] then
-			link._initGroupResolved[map.name] = true
+		if not link._groups[map.name] then
+			link._groups[map.name] = true
 			-- Create goals table if it doesn't exist
 			if goals == nil then
 				goals = {}
@@ -414,12 +436,12 @@ local function resolveLinkGroups(self, grid: GridData, sortedMapNames: {string})
 						if otherLink == link then
 							continue
 						end
-						if otherLink._initGroupResolved[map.name] then
+						if otherLink._groups[map.name] then
 							if not groupLink then
 								groupLink = otherLink
 							end
 						else
-							otherLink._initGroupResolved[map.name] = true
+							otherLink._groups[map.name] = true
 							table.insert(ungroupedLinks, otherLink)
 						end
 					end
@@ -432,7 +454,7 @@ local function resolveLinkGroups(self, grid: GridData, sortedMapNames: {string})
 				groupLink = link
 			end
 			for _, otherLink in pairs(ungroupedLinks) do
-				groupLinks(self, otherLink, groupLink)
+				groupLinks(self, map.name, otherLink, groupLink)
 			end
 		end
 	end
@@ -447,7 +469,7 @@ function Linker.new()
 		OnLinkRemoved = Signal.new(), -- (grid: CollisionGrid, link: RoomLink)
 	}, Linker)
 
-	self._grids = {} :: {[string]: RoomLinkCollisionMap} -- mapName -> RoomLinkCollisionMap
+	self._grids = {} :: {[string]: GridData} -- mapName -> GridData
 	self._links = {} :: {[string]: RoomLink} -- linkId -> RoomLink
 	
 	return self
@@ -595,7 +617,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 	if not startLink or not goalLink then
 		return
 	end
-	if hasSameGroup(startLink, goalLink) then
+	if hasSameGroup(mapName, startLink, goalLink) then
 		return startLink
 	end
 	
@@ -622,7 +644,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 	local lastChildren = {}
 	while #queue > 0 do
 		local groupLink = table.remove(queue, 1)
-		iterateLinks(groupLink, function(parentLink: RoomLink)
+		iterateLinks(mapName, groupLink, function(parentLink: RoomLink)
 			if closed[parentLink] or parentLink.cost == math.huge then
 				return
 			end
@@ -635,7 +657,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 			-- Get link that parentLink leads to
 			local nextLink = self:_GetOtherLink(parentLink)
 			-- Return if nextLink is closed or in the same group as its parent
-			if closed[nextLink] or hasSameGroup(nextLink, parentLink) then
+			if closed[nextLink] or hasSameGroup(mapName, nextLink, parentLink) then
 				return
 			end
 			closed[nextLink] = true
@@ -644,7 +666,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 			addParent(parents, nextLink, parentLink)
 
 			-- Insert nextLink in finalLinks if it is in the goal group
-			if hasSameGroup(nextLink, goalLink) then
+			if hasSameGroup(mapName, nextLink, goalLink) then
 				table.insert(lastChildren, nextLink)
 				return
 			end
@@ -714,7 +736,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 		else
 			costs = gTable
 		end
-		iterateLinks(groupLink, function(parentLink: RoomLink)
+		iterateLinks(mapName, groupLink, function(parentLink: RoomLink)
 			if closed[parentLink] or not children[parentLink] or not costs[parentLink] then
 				return
 			end
@@ -735,7 +757,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 			local nextLink = self:_GetOtherLink(parentLink)
 
 			-- Return if nextLink is not in parentLink's children or in the same group as its parent
-			if not children[parentLink][nextLink] or hasSameGroup(nextLink, parentLink) then
+			if not children[parentLink][nextLink] or hasSameGroup(mapName, nextLink, parentLink) then
 				return
 			end
 
@@ -752,7 +774,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 			closed[nextLink] = true
 
 			-- Insert nextLink in finalLinks if it is in the goal group
-			if hasSameGroup(nextLink, goalLink) then
+			if hasSameGroup(mapName, nextLink, goalLink) then
 				finalLinks[nextLink] = 0
 				return
 			end
@@ -866,23 +888,8 @@ export type RoomLink = {
 	nodeId: number,
 	grid: GridData,
 	toGrid: GridData,
-	group: {[RoomLink]: true}?,
-	_initGroupResolved: {[string]: true}, -- map_combination_name -> true
+	_groups: {[string]: {[RoomLink]: true} | true}, -- map_combination_name -> true
 	_linkCosts: {[string]: {[RoomLink]: number}},
-}
-type RoomLinkCollisionMap = {
-	Grid: CollisionGrid,
-	gridSize: Vector2,
-	maps: {CollisionMap},
-	nodesX: {number},
-	nodesZ: {number},
-	links: {[string]: RoomLink},
-	linksByNodeId: {[number]: {[string]: true}},
-	metadata: any,
-	_groupChangesX: {[number]: number},
-	_groupChangesZ: {[number]: number},
-	_connections: {RBXScriptConnection},
-	_updateScheduled: boolean,
 }
 type Signal = typeof(Signal.new(...))
 type Trove = typeof(Trove.new(...))
