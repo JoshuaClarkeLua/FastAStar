@@ -87,8 +87,11 @@ local function ungroupLink(linker, link: RoomLink, mapName: string?): ()
 		link._groups[mapName] = nil -- Still set to nil (getGroup returns nil if link._groups[mapName] == true)
 	else
 		for name, group in pairs(link._groups) do
-			group[link] = nil
 			link._groups[name] = nil
+			if group == true then
+				continue
+			end
+			group[link] = nil
 		end
 	end
 end
@@ -150,13 +153,13 @@ local function iterateLinks(mapName: string, firstLink: RoomLink, iterator: (lin
 	end
 end
 
-local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, grid: GridData, toGrid: GridData, label: string?): RoomLink
+local function newLink(linker, id: string, num: number, cost: number, nodePos: Vector2, grid: GridData, toGrid: GridData, metadata: any): RoomLink
 	local self = {
 		id = id,
 		num = num,
 		key = `{id}_{num}`,
 		cost = cost,
-		label = label,
+		metadata = metadata,
 		--
 		pos = nodePos,
 		grid = grid,
@@ -545,12 +548,12 @@ do
 		_linkNum += 1
 		return _linkNum % 2
 	end
-	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid, label: string?): RoomLink
+	function Linker:_AddLink(id: string, cost: number, fromPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid, metadata: any): RoomLink
 
 		-- Create link
 		local num = getLinkNum()
 		local gridData = self:GetGridData(fromGrid.Id)
-		local link = newLink(self, id, num, cost, fromPos, gridData, self:GetGridData(toGrid.Id), label)
+		local link = newLink(self, id, num, cost, fromPos, gridData, self:GetGridData(toGrid.Id), metadata)
 
 		-- Add link to grid
 		local nodeId = NodeUtil.getNodeId(fromGrid.Size.X, fromPos.X, fromPos.Y)
@@ -569,7 +572,7 @@ do
 	end
 end
 
-function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?, bidirectional: boolean?, label: string?): ()
+function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?, bidirectional: boolean?, metadata: any): ()
 	assert(cost, 'Cost must be a number')
 	assert(self._links[`{id}_0`] == nil, 'A Link with this id already exists')
 	toGrid = toGrid or fromGrid
@@ -592,12 +595,12 @@ function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vecto
 	toPos = Vector2Util.floor(toPos)
 	bidirectional = bidirectional ~= false
 	-- Add links
-	self:_AddLink(id, cost, fromPos, fromGrid, toGrid, label)
-	self:_AddLink(id, bidirectional and cost or math.huge, toPos, toGrid, fromGrid, label)
+	self:_AddLink(id, cost, fromPos, fromGrid, toGrid, metadata)
+	self:_AddLink(id, bidirectional and cost or math.huge, toPos, toGrid, fromGrid, metadata)
 end
 
 function Linker:RemoveLink(id: string): ()
-	for _, key in ipairs(getLinkKeys(id)) do
+	for _, key in pairs(getLinkKeys(id)) do
 		removeLink(self, self._links[key])
 	end
 end
@@ -827,29 +830,29 @@ end
 	@param toMap string? -- The map to end at. If nil, fromMap is used.
 	@return (boolean, LinkPath) -- (isReachable, path)
 ]=]
-function Linker:FindLinkPath(mapNames: {string}, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?): (boolean, LinkPath)
+function Linker:FindLinkPath(mapNames: {string}, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?): LinkPath
 	fromPos = Vector2Util.floor(fromPos)
 	toPos = Vector2Util.floor(toPos)
 	if not toGrid then
 		toGrid = fromGrid
 	end
 	if not GridUtil.isInGrid(fromGrid.Size.X, fromGrid.Size.Y, fromPos.X, fromPos.Y) then
-		return false, {}
+		return {}
 	end
 	if not GridUtil.isInGrid(toGrid.Size.X, toGrid.Size.Y, toPos.X, toPos.Y) then
-		return false, {}
+		return {}
 	end
 	local fromGridData = self:GetGridData(fromGrid.Id)
 	local toGridData = self:GetGridData(toGrid.Id)
 	-- Check if one of the maps has no links
-	if next(fromGridData.links) == nil or next(toGridData.links) == nil then
-		return true, {} -- Return true because it may still have a path
+	if not fromGridData or not toGridData or next(fromGridData.links) == nil or next(toGridData.links) == nil then
+		return {} -- Return true because it may still have a path
 	end
 	-- Find all possible paths
 	sortMaps(mapNames) -- sort the map names
 	local goalLink, parents = self:_FindLinkPath(mapNames, fromPos, toPos, fromGridData, toGridData)
 	if not goalLink then
-		return false, {}
+		return {}
 	end
 	local path = {}
 
@@ -860,32 +863,19 @@ function Linker:FindLinkPath(mapNames: {string}, fromPos: Vector2, toPos: Vector
 			current = parents[current]
 		end
 	end
-	return true, path
+	return path
 end
 
-function Linker._getMapNameForGrid(grid: CollisionGrid, labels: {string}?): string
-	-- Sort labels
-	if labels then
-		table.sort(labels, function(a, b)
-			return a < b
-		end)
-	end
-	-- Get linker map name
-	local name = `{grid.Id}`
-	if labels then
-		for _, label in ipairs(labels) do
-			name = `{name}\0{label}`
-		end
-	end
-	return name
+function Linker.GetMapName(labels: {string}): string
+	return getMapsName(labels, true)
 end
 
 export type RoomLink = {
 	id: string,
 	num: number,
 	key: string,
+	metadata: any,
 	cost: number,
-	label: string?,
 	pos: Vector2,
 	nodeId: number,
 	grid: GridData,

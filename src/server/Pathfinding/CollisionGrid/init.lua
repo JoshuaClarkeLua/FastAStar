@@ -54,7 +54,7 @@ CollisionGrid.__index = CollisionGrid
 CollisionGrid.OBJECT_TYPE = OBJ_TYPE
 CollisionGrid.DEFAULT_MAP = newMap()
 CollisionGrid.DEFAULT_MAP_COL = newMap(true)
-CollisionGrid.HANDLER_SCRIPT = script.Handler
+CollisionGrid.HANDLER_SCRIPT = script:FindFirstChild("Handler")
 
 
 local function addMapNodes(self, nodes, _map, type, invert): ()
@@ -592,6 +592,17 @@ function CollisionGrid:HasPos3D(pos: Vector3): boolean
 	return GridUtil.isInGrid(gridSize.X, gridSize.Y, _pos.X, _pos.Z)
 end
 
+function CollisionGrid:GetMaps(names: {string}): {CollisionMap}
+	local maps = {}
+	for _, name in pairs(names) do
+		local map = self:GetMap(name)
+		if map then
+			table.insert(maps, map)
+		end
+	end
+	return maps
+end
+
 function CollisionGrid.GetPosFromNodeId(gridSize: Vector2, nodeId: number): (number, number)
 	return NodeUtil.getPosFromId(gridSize.Y, nodeId)
 end
@@ -739,6 +750,24 @@ end
 function CollisionGrid.concat(
 	fn: (new: number, old: number) -> number,
 	default: number,
+	collisionLists: {CollisionGridList}
+): CollisionGridList
+	local newList = table.remove(collisionLists,1) -- sets newList as first list in ...
+	if newList == nil then
+		return {}
+	end
+	newList = table.clone(newList) -- Clone table to avoid modifying the original
+	for _, list in pairs(collisionLists) do
+		for groupId, group in pairs(list) do
+			newList[groupId] = fn(group, newList[groupId] or default)
+		end
+	end
+	return newList
+end
+
+function CollisionGrid.concatVariadic(
+	fn: (new: number, old: number) -> number,
+	default: number,
 	...: CollisionGridList
 ): CollisionGridList
 	local newList = ... -- sets newList as first list in ...
@@ -772,8 +801,8 @@ function CollisionGrid._combineMaps(groupDefault: number, type, maps: {Collision
 	if #X > 0 then
 		local fn = type == OBJ_TYPE.Collision and bit32.bor or bit32.band
 		-- Combine collision maps
-		collisionsX = CollisionGrid.concat(fn, groupDefault, table.unpack(X))
-		collisionsZ = CollisionGrid.concat(fn, groupDefault, table.unpack(Z))
+		collisionsX = CollisionGrid.concat(fn, groupDefault, X)
+		collisionsZ = CollisionGrid.concat(fn, groupDefault, Z)
 	end
 	return collisionsX or {}, collisionsZ or {}
 end
@@ -783,16 +812,20 @@ function CollisionGrid._combineGroups(groupsX: {[number]: any}?, groupsZ: {[numb
 	local Z = {}
 	for _, map in pairs(maps) do
 		if map[type] then
+			local _X = {}
+			local _Z = {}
 			if groupsX then
 				for groupId in pairs(groupsX) do
-					table.insert(X, map[type].nodesX[groupId])
+					table.insert(_X, map[type].nodesX[groupId])
 				end
 			end
 			if groupsZ then
 				for groupId in pairs(groupsZ) do
-					table.insert(Z, map[type].nodesZ[groupId])
+					table.insert(_Z, map[type].nodesZ[groupId])
 				end
 			end
+			table.insert(X, _X)
+			table.insert(Z, _Z)
 		end
 	end
 	-- Combine maps
@@ -800,8 +833,8 @@ function CollisionGrid._combineGroups(groupsX: {[number]: any}?, groupsZ: {[numb
 	if #X > 0 then
 		local fn = type == OBJ_TYPE.Collision and bit32.bor or bit32.band
 		-- Combine collision maps
-		collisionsX = CollisionGrid.concat(fn, groupDefault, table.unpack(X))
-		collisionsZ = CollisionGrid.concat(fn, groupDefault, table.unpack(Z))
+		collisionsX = CollisionGrid.concat(fn, groupDefault, X)
+		collisionsZ = CollisionGrid.concat(fn, groupDefault, Z)
 	end
 	return collisionsX or {}, collisionsZ or {}
 end
@@ -829,15 +862,15 @@ function CollisionGrid.combineMaps(maps: {[any]: CollisionMap}): (CollisionGridL
 		local colByDefaultX, colByDefaultZ = CollisionGrid._combineMaps(invColDefault, OBJ_TYPE.Collision, collisionByDefaultList)
 		-- Combine normal maps with maps with collisionsByDefault set to true
 		-- Order of maps is important, normal maps must be last
-		cX = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultX, cX)
-		cZ = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultZ, cZ)
+		cX = CollisionGrid.concatVariadic(bit32.bor, invColDefault, colByDefaultX, cX)
+		cZ = CollisionGrid.concatVariadic(bit32.bor, invColDefault, colByDefaultZ, cZ)
 	end
 	-- Combine all negation maps together
 	local nX, nZ = CollisionGrid._combineMaps(MAP_GROUP_DEFAULTS[OBJ_TYPE.Negation], OBJ_TYPE.Negation, maps)
 	-- Combine negation maps with collision maps
 	local default = collisionsByDefault and invColDefault or colDefault
-	local collisionsX = CollisionGrid.concat(bit32.band, default, cX, nX)
-	local collisionsZ = CollisionGrid.concat(bit32.band, default, cZ, nZ)
+	local collisionsX = CollisionGrid.concatVariadic(bit32.band, default, cX, nX)
+	local collisionsZ = CollisionGrid.concatVariadic(bit32.band, default, cZ, nZ)
 	return collisionsX or {}, collisionsZ or {}, collisionsByDefault
 end
 
@@ -864,15 +897,15 @@ function CollisionGrid.combineGroups(groupsX: { [number]: any }?, groupsZ: { [nu
 		local colByDefaultX, colByDefaultZ = CollisionGrid._combineGroups(groupsX, groupsZ, invColDefault, OBJ_TYPE.Collision, collisionByDefaultList)
 		-- Combine normal maps with maps with collisionsByDefault set to true
 		-- Order of maps is important, normal maps must be last
-		cX = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultX, cX)
-		cZ = CollisionGrid.concat(bit32.bor, invColDefault, colByDefaultZ, cZ)
+		cX = CollisionGrid.concatVariadic(bit32.bor, invColDefault, colByDefaultX, cX)
+		cZ = CollisionGrid.concatVariadic(bit32.bor, invColDefault, colByDefaultZ, cZ)
 	end
 	-- Combine all negation maps together
 	local nX, nZ = CollisionGrid._combineGroups(groupsX, groupsZ, MAP_GROUP_DEFAULTS[OBJ_TYPE.Negation], OBJ_TYPE.Negation, maps)
 	-- Combine negation maps with collision maps
 	local default = collisionsByDefault and invColDefault or colDefault
-	local collisionsX = CollisionGrid.concat(bit32.band, default, cX, nX)
-	local collisionsZ = CollisionGrid.concat(bit32.band, default, cZ, nZ)
+	local collisionsX = CollisionGrid.concatVariadic(bit32.band, default, cX, nX)
+	local collisionsZ = CollisionGrid.concatVariadic(bit32.band, default, cZ, nZ)
 	return collisionsX or {}, collisionsZ or {}, collisionsByDefault
 end
 
