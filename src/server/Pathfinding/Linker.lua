@@ -470,7 +470,7 @@ Linker.__index = Linker
 
 function Linker.new()
 	local self = setmetatable({
-		OnLinkRemoved = Signal.new(), -- (grid: CollisionGrid, link: RoomLink)
+		OnLinkRemoved = Signal.new(), -- (link: RoomLink)
 	}, Linker)
 
 	self._grids = {} :: {[string]: GridData} -- mapName -> GridData
@@ -496,6 +496,12 @@ function Linker:_AddGrid(grid: CollisionGrid): ()
 		linksByNodeId = {}, -- {[nodeId]: {[string]: true}}
 		_mapData = {},
 	}
+	gridData.trove:Add(grid.OnDestroy:Connect(function()
+		gridData.trove:Destroy()
+	end))
+	gridData.trove:Add(function()
+		self:_RemoveGrid(grid.Id)
+	end)
 	self._grids[grid.Id] = gridData
 end
 
@@ -503,6 +509,9 @@ function Linker:_RemoveGrid(id: string): ()
 	local data = self._grids[id]
 	if not data then
 		return
+	end
+	for _, link in pairs(data.links) do
+		self.OnLinkRemoved:Fire(link)
 	end
 	self._grids[id] = nil
 end
