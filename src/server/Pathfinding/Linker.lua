@@ -244,6 +244,7 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 		return true
 	end
 	local groupChangesX, groupChangesZ = getChangedGroups(old.colX, map.colX, map.colByDefault), nil
+	print('groupChanges nil', next(groupChangesX) == nil)
 	if next(groupChangesX) == nil then
 		return false
 	end
@@ -291,7 +292,7 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 		local node = Vector2.new(NodeUtil.getPosFromId(gridSize.X, nodeId))
 		changedNodes[nodeId] = nil
 		local nodes = {[nodeId] = true}
-		local data = AStarJPS.fill(gridSize, node, old.colX, old.colZ)
+		local data = AStarJPS.fill(gridSize, node, old.colX, old.colZ, old.colByDefault)
 		for _nodeId in pairs(data.nodesReached) do
 			changedNodes[_nodeId] = nil
 			nodes[_nodeId] = true
@@ -302,15 +303,18 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 	
 	-- Get the groups which can reach a node group
 	local affectedGroups = {}
+	local i = 0
 	for _, nodes in pairs(nodeGroups) do
 		for _, link in pairs(grid.links) do
 			local group = getGroup(map.name, link)
 			-- Node may not be in a group, add it anyways so that it can get processed
 			if nodes[link.nodeId] and (not group or not affectedGroups[group]) then
+				i += 1
 				affectedGroups[group or link] = link
 			end
 		end
 	end
+	print('affected groups', i)
 
 	-- Update the groups (make new ones if needed)
 	local goals = {}
@@ -318,6 +322,7 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 	for _, link in pairs(grid.links) do
 		table.insert(goals, link.pos)
 	end
+	print(goals)
 	for _, link in pairs(affectedGroups) do
 		-- Reset their _linkCosts cache
 		iterateLinks(map.name, link, function(link: RoomLink)
@@ -331,12 +336,15 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 	end
 	-- Update the groups
 	local pLink = next(queue)
+	local i = 0
 	while pLink do
+		i += 1
 		-- Remove from queue
 		queue[pLink] = nil
 		-- Find other links in the group
-		local _, data = AStarJPS.findReachable(gridSize, pLink.pos, goals, false, map.colX, map.colZ)
+		local _, data = AStarJPS.findReachable(gridSize, pLink.pos, goals, false, map.colX, map.colZ, map.colByDefault)
 		if data then
+			print(data.goalsReached)
 			for goalId in pairs(data.goalsReached) do
 				local links = grid.linksByNodeId[goalId]
 				if links then
@@ -357,6 +365,7 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 		--
 		pLink = next(queue)
 	end
+	print('added groups', i)
 
 	return true
 end
@@ -409,6 +418,7 @@ local function resolveLinkGroups(self, grid: GridData, sortedMapNames: {string})
 	local map = getMapData(grid.grid, sortedMapNames, true)
 	local changed = triggerMapUpdate(self, grid, map)
 
+	print('changed', changed)
 	if changed then
 		grid._mapData[map.name] = map
 	end
@@ -630,6 +640,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 	if not startLink or not goalLink then
 		return
 	end
+	print(startLink._groups[mapName], goalLink._groups[mapName])
 	if hasSameGroup(mapName, startLink, goalLink) then
 		return startLink
 	end
@@ -819,6 +830,7 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 		end
 	end
 
+	print('returning with parents')
 	return finalLink, parents
 end
 
