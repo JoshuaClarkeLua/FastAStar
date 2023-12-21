@@ -183,6 +183,7 @@ function CollisionGrid.newAsync(
 		OnMapAdded = trove:Add(Signal.new()), -- (mapName: string, map: CollisionMap)
 		OnMapRemoved = trove:Add(Signal.new()), -- (mapName: string)
 		OnMapChanged = trove:Add(Signal.new()), -- (mapName: string, nodes: {Vector2}, isCollision: boolean)
+		OnDestroy = Signal.new(),
 		_OnResume = Signal.new(), -- added to trove below
 		--
 		_trove = trove,
@@ -196,6 +197,8 @@ function CollisionGrid.newAsync(
 	}, CollisionGrid)
 
 	trove:Add(function()
+		self.OnDestroy:Fire()
+		self.OnDestroy:Destroy()
 		self._OnResume:Fire()
 		self._OnResume:Destroy()
 	end)
@@ -671,6 +674,29 @@ end
 
 function CollisionGrid.GetCollisionGroup(grid: CollisionGridList, groupId: number, collisionsByDefault: boolean?): number
 	return CollisionGrid.GetGroup(grid, groupId, OBJ_TYPE.Collision, collisionsByDefault)
+end
+
+function CollisionGrid.GetGridFromPos(grids: {[any]: CollisionGrid}, pos: Vector3): CollisionGrid?
+	local validGrids = {}
+	for _, grid in pairs(grids) do
+		if grid:HasPos3D(pos) then
+			table.insert(validGrids, grid)
+		end
+	end
+	if #validGrids == 0 then
+		return
+	end
+
+	local lowYDiff = math.huge
+	local closestGrid = nil :: CollisionGrid?
+	for _, grid in pairs(validGrids) do
+		local yDiff = pos.Y - grid:GetOrigin().Y
+		if yDiff >= 0 and yDiff < lowYDiff then
+			lowYDiff = yDiff
+			closestGrid = grid
+		end
+	end
+	return closestGrid
 end
 
 --[=[
