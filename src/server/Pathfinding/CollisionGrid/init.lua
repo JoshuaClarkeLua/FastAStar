@@ -116,7 +116,10 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	--
 	local line = cf:VectorToWorldSpace(size * lenV) * XZ
 	local line2d = Vector2.new(line.X, line.Z)
-	local lineMag2 = line2d.Magnitude / 2
+	local lineMag2 = math.max(.5, line2d.Magnitude / 2)
+	local line_2 = cf:VectorToWorldSpace(size * widV) * XZ
+	local line2d_2 = Vector2.new(line_2.X, line_2.Z)
+	local lineMag2_2 = math.max(.5, line2d_2.Magnitude / 2)
 	-- Calculate the square's opposite corners which fit the line
 	local rsize2 = cf:VectorToWorldSpace(size2) * XZ
 	local nrsize2 = cf:VectorToWorldSpace(Vector3.new(-size2.X, 0, size2.Z))
@@ -142,13 +145,18 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 			local v2 = Vector3Util.project(cellPos, line2d)
 
 			-- Check if cell is past the line (vertical check)
-			if math.ceil(lineMag2 - v2.Magnitude + 0.5) >= 0 then
+			if math.floor(lineMag2 - v2.Magnitude + 1/4) >= 0 then
 				-- Check if cell is too far from the line (horizontal check)
-				local dist = (v2 - cellPos).Magnitude
-				if math.floor(dist - 0.5) <= (widV * size2).Magnitude then
+				v2 = Vector3Util.project(cellPos, line2d_2)
+				if math.floor(lineMag2_2 - v2.Magnitude + 1/4) >= 0 then
 					table.insert(nodes, x)
 					table.insert(nodes, z)
 				end
+				-- local dist = (v2 - cellPos).Magnitude
+				-- if math.round(dist - 0.5) <= (widV * size2).Magnitude then
+				-- 	table.insert(nodes, x)
+				-- 	table.insert(nodes, z)
+				-- end
 			end
 		end
 	end

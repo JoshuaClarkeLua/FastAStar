@@ -57,7 +57,6 @@ end ]]
 
 local main = costGrid:GetMapAsync("main")
 local main2 = costGrid:GetMapAsync("main2")
-print(main)
 
 
 
@@ -98,13 +97,13 @@ local function doPath()
 	local start = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.START.CFrame.Position)
 	local goal = (origin * CFrame.new(-bSize2.X, 0, -bSize2.Z)):PointToObjectSpace(workspace.GOAL.CFrame.Position)
 	local path = AJPS.findPath(gridSize, Vector2.new(start.X,start.Z), Vector2.new(goal.X,goal.Z), nil, CollisionGrid.combineMaps({main, main2}))
-	local _path = AJPS.reconstructPath(path, true, true)
+	-- local _path = AJPS.reconstructPath(path, true, true)
 	s = os.clock() - s
 	print(s)
 	workspace.Parts:Destroy()
 	local folder = Instance.new("Folder")
 	folder.Name = 'Parts'
-	if #path > 2 then
+	if #path > 1 then
 		local lastP
 		for i = 1, #path do
 			local node = path[i]
