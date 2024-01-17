@@ -143,9 +143,6 @@ function AJPS.findPath(
 	else
 		goalNode = SingleGoal.findGoalJPS(self, self.start, self.startNodeId)
 	end
-	if goalNode and goal ~= goalNode then
-		table.insert(self.path, goal)
-	end
 	-- Reconstruct path
 	reconstructPath(self, goalNode)
 	return self.path, self
