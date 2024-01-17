@@ -91,7 +91,7 @@ function AJPS._setup(
 end
 
 function AJPS._getGoalData(self, goal: Vector2)
-	goal = Vector2Util.round(goal)
+	goal = Vector2Util.floor(goal)
 	local gridSize = self.gridSize
 	if not GridUtil.isInGrid(gridSize.X, gridSize.Y, goal.X, goal.Y) or not AJPSUtil.canWalk(self, goal.X, goal.Y) then
 		return
