@@ -57,7 +57,7 @@ function AJPS._setup(
 	collisionsZ: CollisionGrid.CollisionGridList,
 	collisionsByDefault: boolean?
 )
-	start = Vector2Util.round(start)
+	start = Vector2Util.floor(start)
 	-- Return if start or goal is outside of grid
 	if not GridUtil.isInGrid(gridSize.X, gridSize.Y, start.X, start.Y) then
 		return false, {}
@@ -213,12 +213,6 @@ function AJPS.reconstructPath(path: {Vector2}, noDiagonal: boolean?, diagonalPad
 	if #path < 2 then
 		return newPath
 	end
-	-- Remove the goal node if it's the same as the node before the goal
-	-- (The findPath function adds the exact goal position to the path without the coordinates being integers)
-	local goalNode: Vector2?
-	if Vector2Util.round(path[1]) == path[2] then
-		goalNode = table.remove(path, 1)
-	end
 	for i, node in ipairs(path) do
 		local next = path[i+1]
 		if not next then
@@ -244,9 +238,6 @@ function AJPS.reconstructPath(path: {Vector2}, noDiagonal: boolean?, diagonalPad
 				end
 			end
 		end
-	end
-	if goalNode then
-		table.insert(newPath, 1, goalNode)
 	end
 	return newPath
 end
