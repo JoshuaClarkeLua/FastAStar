@@ -63,7 +63,7 @@ local function getMapData(grid: CollisionGrid, mapsName: {string}, noSort: boole
 end
 
 local function getLinkKey(link: RoomLink): string
-	return `{link.id}_{link.num}`
+	return link.key
 end
 
 local function getLinkKeys(id: string): {string}
@@ -98,6 +98,10 @@ end
 
 local function removeLink(linker, link: RoomLink): ()
 	local key = getLinkKey(link)
+	-- Return if link is already removed
+	if linker._links[key] == nil then
+		return
+	end
 	-- Remove link from Linker
 	linker._links[key] = nil
 	-- Remove link from grid
@@ -244,7 +248,6 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 		return true
 	end
 	local groupChangesX, groupChangesZ = getChangedGroups(old.colX, map.colX, map.colByDefault), nil
-	print('groupChanges nil', next(groupChangesX) == nil)
 	if next(groupChangesX) == nil then
 		return false
 	end
@@ -314,7 +317,6 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 			end
 		end
 	end
-	print('affected groups', i)
 
 	-- Update the groups (make new ones if needed)
 	local goals = {}
@@ -322,7 +324,6 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 	for _, link in pairs(grid.links) do
 		table.insert(goals, link.pos)
 	end
-	print(goals)
 	for _, link in pairs(affectedGroups) do
 		-- Reset their _linkCosts cache
 		iterateLinks(map.name, link, function(link: RoomLink)
@@ -344,7 +345,6 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 		-- Find other links in the group
 		local _, data = AStarJPS.findReachable(gridSize, pLink.pos, goals, false, map.colX, map.colZ, map.colByDefault)
 		if data then
-			print(data.goalsReached)
 			for goalId in pairs(data.goalsReached) do
 				local links = grid.linksByNodeId[goalId]
 				if links then
@@ -365,7 +365,6 @@ local function triggerMapUpdate(linker, grid: GridData, map: MapData): boolean
 		--
 		pLink = next(queue)
 	end
-	print('added groups', i)
 
 	return true
 end
@@ -418,7 +417,6 @@ local function resolveLinkGroups(self, grid: GridData, sortedMapNames: {string})
 	local map = getMapData(grid.grid, sortedMapNames, true)
 	local changed = triggerMapUpdate(self, grid, map)
 
-	print('changed', changed)
 	if changed then
 		grid._mapData[map.name] = map
 	end
@@ -521,7 +519,7 @@ function Linker:_RemoveGrid(id: string): ()
 		return
 	end
 	for _, link in pairs(data.links) do
-		self.OnLinkRemoved:Fire(link)
+		self:RemoveLink(link.id)
 	end
 	self._grids[id] = nil
 end
@@ -640,7 +638,6 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 	if not startLink or not goalLink then
 		return
 	end
-	print(startLink._groups[mapName], goalLink._groups[mapName])
 	if hasSameGroup(mapName, startLink, goalLink) then
 		return startLink
 	end
@@ -830,7 +827,6 @@ function Linker:_FindLinkPath(sortedMapNames: {string}, fromPos: Vector2, toPos:
 		end
 	end
 
-	print('returning with parents')
 	return finalLink, parents
 end
 
