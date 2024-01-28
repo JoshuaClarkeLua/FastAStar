@@ -1,4 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Promise = require(ReplicatedStorage.Packages.Promise)
 local AStarJPS = require(script.Parent.AStarJPS)
 local CollisionGrid = require(script.Parent.CollisionGrid)
 local Linker = require(script.Parent.Linker)
@@ -11,7 +12,6 @@ type CollisionMap = CollisionGrid.CollisionMap
 type Linker = Linker.Linker
 type LinkPath = Linker.LinkPath
 type RoomLink = Linker.RoomLink
-
 
 local function plotLine(x0, y0, x1, y1)
 	x0 = math.round(x0)
@@ -71,12 +71,11 @@ local function forceNoDiagonal(points: { Vector2 }, padding: boolean?): { Vector
 	return points
 end
 
-
 local Path = {}
 Path.__index = Path
 Path.__tostring = function(self)
 	local waypoints = self:GetWaypoints()
-	local wps = ''
+	local wps = `Path has {#waypoints} waypoints:\n`
 	for _, waypoint in ipairs(waypoints) do
 		wps ..= `\nPosition: {waypoint.Position};`
 		if waypoint.Link then
@@ -86,7 +85,13 @@ Path.__tostring = function(self)
 	return wps
 end
 
-function Path.waypoint(position: Vector3, link: PathfindingLink?, label: string?, grid: CollisionGrid?, node: Vector2?): Waypoint
+function Path.waypoint(
+	position: Vector3,
+	link: PathfindingLink?,
+	label: string?,
+	grid: CollisionGrid?,
+	node: Vector2?
+): Waypoint
 	return {
 		Position = position,
 		Link = link,
@@ -96,7 +101,7 @@ function Path.waypoint(position: Vector3, link: PathfindingLink?, label: string?
 	}
 end
 
-function Path.new(linker: Linker, collisionGrids: {CollisionGrid}, labels: {string})
+function Path.new(linker: Linker, collisionGrids: { CollisionGrid }, labels: { string })
 	local grids = {}
 	for _, grid in pairs(collisionGrids) do
 		grids[grid] = grid
@@ -110,7 +115,10 @@ function Path.new(linker: Linker, collisionGrids: {CollisionGrid}, labels: {stri
 		trove = trove,
 		_blockTrove = trove:Add(Trove.new()),
 		--
+		Start = nil :: Vector3?,
+		Goal = nil :: Vector3?,
 		IsBlocked = false,
+		NoPath = true,
 		--
 		OnBlocked = trove:Add(Signal.new()),
 		--
@@ -119,7 +127,7 @@ function Path.new(linker: Linker, collisionGrids: {CollisionGrid}, labels: {stri
 		_labels = labels,
 		_labelDict = _labels,
 		_mapName = Linker.GetMapName(labels),
-		_waypoints = nil :: {Waypoint}?,
+		_waypoints = nil :: { Waypoint }?,
 		_destroyed = false,
 	}, Path)
 
@@ -130,20 +138,29 @@ function Path:_getGridFromPos(pos: Vector3): CollisionGrid?
 	return CollisionGrid.GetGridFromPos(self._grids, pos)
 end
 
-function Path:_pauseGridsAsync(callback: () -> ()): ()
+function Path:_pauseGrids(callback: () -> ()): Promise
+	local promises = {}
+	local pausedGrids = {}
 	for _, grid in pairs(self._grids) do
-		-- Wait to resume (allows the map to be updated)
-		grid:WaitForResume()
-		-- Pauses the grid after the map has been updated
-		grid:PauseAsync()
+		table.insert(
+			promises,
+			Promise.try(function()
+				-- Wait to resume (allows the map to be updated)
+				grid:WaitForResume()
+				-- Pauses the grid after the map has been updated
+				grid:PauseAsync()
+				table.insert(pausedGrids, grid)
+			end)
+		)
 	end
-	xpcall(callback, function(err)
-		task.spawn(error, err)
+	return Promise.all(promises):andThenCall(callback):finally(function()
+		promises = {}
+		for _, grid in ipairs(pausedGrids) do
+			-- Resume the grid updates
+			table.insert(promises, Promise.try(grid.ResumeAsync, grid))
+		end
+		return Promise.all(promises)
 	end)
-	for _, grid in pairs(self._grids) do
-		-- Resume the grid updates
-		grid:ResumeAsync()
-	end
 end
 
 function Path:_listenForBlocked(): ()
@@ -153,7 +170,9 @@ function Path:_listenForBlocked(): ()
 
 	-- Reconstruct the path per-grid to be able to check if it gets blocked
 	local waypoints = self:GetWaypoints()
-	if #waypoints == 0 then return end
+	if #waypoints == 0 then
+		return
+	end
 
 	local linker = self._linker
 	local _gridNodes = {}
@@ -182,7 +201,7 @@ function Path:_listenForBlocked(): ()
 		local gridNodes = _gridNodes[grid]
 		if not gridNodes then
 			gridNodes = {
-				[grid] = {}
+				[grid] = {},
 			}
 			_gridNodes[grid] = gridNodes
 		end
@@ -191,19 +210,25 @@ function Path:_listenForBlocked(): ()
 			if zT then
 				zT[point.Y] = true
 			else
-				gridNodes[point.X] = {[point.Y] = true}
+				gridNodes[point.X] = { [point.Y] = true }
 			end
 		end
 	end
 
 	local _checkScheduled = false
 	local function scheduleFullCheck(grid: CollisionGrid): ()
-		if _checkScheduled then return end
+		if _checkScheduled then
+			return
+		end
 		_checkScheduled = true
 		task.defer(function()
-			if self._destroyed or self.IsBlocked then return end
+			if self._destroyed or self.IsBlocked then
+				return
+			end
 			local nodes = _gridNodes[grid]
-			if not nodes then return end
+			if not nodes then
+				return
+			end
 			local colX, _, colByDefault = grid:GetMaps(self._labels)
 			for x, zT in pairs(nodes) do
 				for z in pairs(zT) do
@@ -218,7 +243,7 @@ function Path:_listenForBlocked(): ()
 		end)
 	end
 
-	local function hasNodes(grid: CollisionGrid, nodes: {Vector2}): boolean
+	local function hasNodes(grid: CollisionGrid, nodes: { Vector2 }): boolean
 		local gridSize = grid:GetSize()
 		local nodeList = _gridNodes[grid]
 		local nodesX = {}
@@ -229,7 +254,7 @@ function Path:_listenForBlocked(): ()
 				local colByDefault
 				if not nodesX[groupId] then
 					local _nodesX
-					_nodesX, _, colByDefault = CollisionGrid.combineGroups({[groupId] = true}, nil, maps)
+					_nodesX, _, colByDefault = CollisionGrid.combineGroups({ [groupId] = true }, nil, maps)
 					nodesX[groupId] = _nodesX[groupId]
 				end
 				if CollisionGrid.HasCollision(nodesX, gridSize.Y, node.X, node.Y, colByDefault) then
@@ -251,8 +276,10 @@ function Path:_listenForBlocked(): ()
 					scheduleFullCheck()
 				end
 			end)),
-			trove:Add(grid.OnMapChanged:Connect(function(name: string, nodes: {Vector2}, isCollision: boolean)
-				if not isCollision then return end
+			trove:Add(grid.OnMapChanged:Connect(function(name: string, nodes: { Vector2 }, isCollision: boolean)
+				if not isCollision then
+					return
+				end
 				if not self.IsBlocked and hasNodes(grid, nodes) then
 					self.IsBlocked = true
 					self.OnBlocked:Fire()
@@ -289,17 +316,21 @@ function Path:_listenForBlocked(): ()
 	end)
 end
 
-function Path:ComputeAsync(start: Vector3, goal: Vector3): ()
+function Path:Compute(start: Vector3, goal: Vector3): Promise
 	assert(start, "Invalid argument #2: 'start' is nil")
 	assert(goal, "Invalid argument #3: 'goal' is nil")
 	if typeof(start) ~= "Vector3" then
-		error("Invalid argument #2: expected Vector3, got"..typeof(start))
+		error("Invalid argument #2: expected Vector3, got" .. typeof(start))
 	elseif typeof(goal) ~= "Vector3" then
-		error("Invalid argument #3: expected Vector3, got"..typeof(goal))
+		error("Invalid argument #3: expected Vector3, got" .. typeof(goal))
 	end
+	self.Goal = goal
+	self.Start = start
+	self.NoPath = true
+	self._waypoints = nil
 
 	-- Prevent grids from getting any further updates
-	self:_pauseGridsAsync(function()
+	return self:_pauseGrids(function()
 		-- Get grids
 		local fromGrid = self:_getGridFromPos(start)
 		local toGrid = self:_getGridFromPos(goal)
@@ -320,11 +351,11 @@ function Path:ComputeAsync(start: Vector3, goal: Vector3): ()
 		local fromPos = Vector2.new(gridStart.X, gridStart.Z)
 		local toPos = Vector2.new(gridGoal.X, gridGoal.Z)
 
-		
+		local wps: { Waypoint } = {}
 		--[[
 			STEP #2
 
-			Try to find path if start and goal are in the same grid
+			Attempt to find path if start and goal are in the same grid
 		]]
 		if fromGrid == toGrid then
 			local maps = {}
@@ -334,95 +365,116 @@ function Path:ComputeAsync(start: Vector3, goal: Vector3): ()
 					table.insert(maps, map)
 				end
 			end
-			local _path = AStarJPS.findPath(fromGrid:GetSize(), fromPos, toPos, nil, CollisionGrid.combineMaps(maps))
+			local path = AStarJPS.findPath(fromGrid:GetSize(), fromPos, toPos, nil, CollisionGrid.combineMaps(maps))
 			-- Convert all node Vector2s to Vector3s (if path found) and return
-			if #_path > 0 then
-				local waypoints = {}
-				for j, node in _path do
-					waypoints[j] = Path.waypoint(fromGrid:ToWorldSpace(Vector3.new(node.X, 0, node.Y)), nil, nil, fromGrid, node)
+			if #path > 0 then
+				for j, node in path do
+					wps[j] =
+						Path.waypoint(fromGrid:ToWorldSpace(Vector3.new(node.X, 0, node.Y)), nil, nil, fromGrid, node)
 				end
-				self._waypoints = waypoints
-				self:_listenForBlocked()
-				return
 			end
 			--
 		end
-		--[[
-			STEP #3
 
-			Get link path
-		]]
-		local linkPath = linker:FindLinkPath(self._labels, fromPos, toPos, fromGrid, toGrid)
-		if #linkPath == 0 then
-			return
-		end
-		print('LinkPath: ',#linkPath)
+		if #wps == 0 then
+			--[[
+				STEP #3
 
-		--[[
-			STEP #4
-
-			Construct path from gridStart to gridGoal using link path (if any)
-		]]
-		local path: Path = {}
-		if #linkPath > 1 then
-			local lastPos = toPos
-			for i = 1, #linkPath, 2 do
-				-- Get link pair
-				local linkB = linkPath[i]
-				-- Get linkB positional data
-				local grid: CollisionGrid = linkB.grid.grid
-				if not self._grids[grid] then
-					error(`Link '{linkB.id}' is located on a grid that was not passed to Path.new() grids list! All grids in the linker must be included in the list.`)
-				end
-				local map = linker:GetMapData(grid, self._mapName)
-				-- Get path from lastPos to linkB
-				local _path = AStarJPS.findPath(grid:GetSize(), linkB.pos, lastPos, nil, map.colX, map.colZ, map.colByDefault)
-				-- Return if no path found (should never happen)
-				if #_path == 0 then
-					warn('Failed to find path to link.')
-					return
-				end
-				-- Add path to main path (convert to Vector3's)
-				for _, node in ipairs(_path) do
-					table.insert(path, Path.waypoint(grid:ToWorldSpace(Vector3.new(node.X, 0, node.Y)), nil, nil, grid, node))
-				end
-				-- Add linkB
-				table.insert(path, Path.waypoint(grid:ToWorldSpace(Vector3.new(linkB.pos.X, 0, linkB.pos.Y)), nil, nil, grid, linkB.pos))
-
-				-- Add linkA
-				local linkA = linkPath[i + 1]
-				local nextGrid = linkA.grid.grid
-				table.insert(path, Path.waypoint(
-					nextGrid:ToWorldSpace(Vector3.new(linkA.pos.X, 0, linkA.pos.Y)),
-					linkA.metadata.link,
-					linkA.metadata.label,
-					nextGrid,
-					linkA.pos
-				))
-				-- Set lastPos to linkA
-				lastPos = linkA.pos
-			end
-
-			-- Get path from lastPos to gridGoal
-			local map = linker:GetMapData(fromGrid, self._mapName)
-			local _path = AStarJPS.findPath(fromGrid:GetSize(), fromPos, lastPos, nil, map.colX, map.colZ, map.colByDefault)
-			if #_path == 0 then
-				warn('Failed to find path to link.')
+				Attempt to get link path
+			]]
+			local linkPath = linker:FindLinkPath(self._labels, fromPos, toPos, fromGrid, toGrid)
+			if #linkPath == 0 then
 				return
 			end
-			for _, node in ipairs(_path) do
-				table.insert(
-					path,
-					Path.waypoint(fromGrid:ToWorldSpace(Vector3.new(node.X, 0, node.Y)), nil, nil, fromGrid, node)
-				)
+
+			--[[
+				STEP #4
+
+				Construct path from gridStart to gridGoal using link path (if any)
+			]]
+			if #linkPath > 1 then
+				local lastPos = toPos
+				for i = 1, #linkPath, 2 do
+					-- Get link pair
+					local linkB = linkPath[i]
+					-- Get linkB positional data
+					local grid: CollisionGrid = linkB.grid.grid
+					if not self._grids[grid] then
+						error(
+							`Link '{linkB.id}' is located on a grid that was not passed to Path.new() grid list! All grids in the linker must be included in the list.`
+						)
+					end
+					local map = linker:GetMapData(grid, self._mapName)
+					-- Get path from lastPos to linkB
+					local path =
+						AStarJPS.findPath(grid:GetSize(), linkB.pos, lastPos, nil, map.colX, map.colZ, map.colByDefault)
+					-- Return if no path found (should never happen)
+					if #path == 0 then
+						warn("Failed to find path to link.")
+						return
+					end
+					-- Add path to wps (convert to Vector3's)
+					for _, node in ipairs(path) do
+						table.insert(
+							wps,
+							Path.waypoint(grid:ToWorldSpace(Vector3.new(node.X, 0, node.Y)), nil, nil, grid, node)
+						)
+					end
+					-- Add linkB
+					table.insert(
+						wps,
+						Path.waypoint(
+							grid:ToWorldSpace(Vector3.new(linkB.pos.X, 0, linkB.pos.Y)),
+							nil,
+							nil,
+							grid,
+							linkB.pos
+						)
+					)
+
+					-- Add linkA
+					local linkA = linkPath[i + 1]
+					local nextGrid = linkA.grid.grid
+					table.insert(
+						wps,
+						Path.waypoint(
+							nextGrid:ToWorldSpace(Vector3.new(linkA.pos.X, 0, linkA.pos.Y)),
+							linkA.metadata.link,
+							linkA.metadata.label,
+							nextGrid,
+							linkA.pos
+						)
+					)
+					-- Set lastPos to linkA
+					lastPos = linkA.pos
+				end
+
+				-- Get path from lastPos to gridGoal
+				local map = linker:GetMapData(fromGrid, self._mapName)
+				local path =
+					AStarJPS.findPath(fromGrid:GetSize(), fromPos, lastPos, nil, map.colX, map.colZ, map.colByDefault)
+				if #path == 0 then
+					warn("Failed to find path to link.")
+					return
+				end
+				for _, node in ipairs(path) do
+					table.insert(
+						wps,
+						Path.waypoint(fromGrid:ToWorldSpace(Vector3.new(node.X, 0, node.Y)), nil, nil, fromGrid, node)
+					)
+				end
 			end
 		end
-		self._waypoints = path
-		self:_listenForBlocked()
+
+		if #wps > 0 then
+			self.NoPath = false
+			self._waypoints = wps
+			self:_listenForBlocked()
+		end
 	end)
 end
 
-function Path:GetWaypoints(): {Waypoint}
+function Path:GetWaypoints(): { Waypoint }
 	return self._waypoints or {}
 end
 
@@ -432,6 +484,7 @@ function Path:Destroy(): Path
 	return self
 end
 
+type Promise = typeof(Promise.new(...))
 export type Waypoint = typeof(Path.waypoint(...))
 export type Path = typeof(Path.new(...))
 return Path
