@@ -71,20 +71,20 @@ end
 	@function forced
 
 	Returns the position of the bit (representing a node) which is a forced neighbor in groupB *before the first collision (if any)*
-	hasCollision is true if there is a collision
+	collisionBit is true if there is a collision
 
 	@param groupA number -- The group we are checking for forced neighbors
 	@param groupB number -- The group that could potentially have forced neighbors
 	@param dir number -- The direction of travel (1 or -1)
-	@return (boolean?, number?) -- (hasCollision, forceResult)
+	@return (number?, number?) -- (collisionBit, forceResult)
 ]=]
-function AJPS.forced(groupA, groupB, dir): (boolean?, number?)
+function AJPS.forced(groupA, groupB, dir): (number?, number?)
 	-- Create collision mask
 	local firstB = dir > 0 and bit32.countrz(groupA) or bit32.countlz(groupA)
-	local hasCollision = firstB < 32
+	local hasCollision = firstB < 32 -- firstB goes from 0 -> 32 regardless of the direction we are counting in
 	if hasCollision then
 		if firstB == 0 then
-			return dir > 0 and firstB or 31 - firstB
+			return dir > 0 and 0 or 31, nil
 		end
 		local _firstB = math.max(firstB - 1, -1)
 		local colMask = dir < 0 and Bit32Util.FILL_L[_firstB] or Bit32Util.FILL_R[_firstB]
@@ -102,7 +102,7 @@ function AJPS.forced(groupA, groupB, dir): (boolean?, number?)
 	-- 3. Make the all bits from the first bit (depends which direction we're coming from) to the saved position all 0s
 	groupBFlip = bit32.band(groupBFlip, dir > 0 and Bit32Util.FILL_L[startB] or Bit32Util.FILL_R[startB])
 	local jumpNode = dir > 0 and bit32.countrz(groupBFlip) or bit32.countlz(groupBFlip)
-	-- Return if no jump node or if the jump node is one node before the collision node
+	-- Return if no jump node or if the jump node is at the collision node or past it
 	if hasCollision and jumpNode >= firstB then
 		return hasCollision and (dir > 0 and firstB or 31 - firstB) or nil
 	end
@@ -136,16 +136,16 @@ function AJPS.checkGroup(
 	if force then
 		-- Check next group if force is at end of current group
 		if force == 32 or force == -1 then
-			local nGroupId = groupIdA + dir
-			if AJPS.isGroupInRow(rowSize, row, nGroupId, first, last, dir) then
-				local nGroup = costs[nGroupId] or 0
-				local nGroupB = costs[groupIdB + dir] or 0
+			local nextGroupId = groupIdA + dir
+			if AJPS.isGroupInRow(rowSize, row, nextGroupId, first, last, dir) then
+				local nextGroup = costs[nextGroupId] or 0
+				local nextGroupB = costs[groupIdB + dir] or 0
 				if dir > 0 then
-					if bit32.extract(nGroup, 0, 1) == 1 or bit32.extract(nGroupB, 0, 1) == 1 then
+					if bit32.extract(nextGroup, 0, 1) == 1 or bit32.extract(nextGroupB, 0, 1) == 1 then
 						force = nil
 					end
 				else
-					if bit32.extract(nGroup, 31, 1) == 1 or bit32.extract(nGroupB, 31, 1) == 1 then
+					if bit32.extract(nextGroup, 31, 1) == 1 or bit32.extract(nextGroupB, 31, 1) == 1 then
 						force = nil
 					end
 				end
@@ -214,8 +214,8 @@ function AJPS.findNeighbors(self, node, pNode): { Vector2 }
 		if not AJPS.canWalk(self, node.X, node.Y - 1) and AJPS.canWalk(self, n.X, node.Y - 1) then
 			table.insert(neighbors, n - Vector2.yAxis)
 		end
-		--
-		-- Move Y
+	--
+	-- Move Y
 	elseif dir.X == 0 and dir.Y ~= 0 then
 		-- Check for forced neighbors
 		if not AJPS.canWalk(self, node.X + 1, node.Y) and AJPS.canWalk(self, node.X + 1, n.Y) then
@@ -224,14 +224,16 @@ function AJPS.findNeighbors(self, node, pNode): { Vector2 }
 		if not AJPS.canWalk(self, node.X - 1, node.Y) and AJPS.canWalk(self, node.X - 1, n.Y) then
 			table.insert(neighbors, n - Vector2.xAxis)
 		end
-		--
-		-- Diagonal movement
+	--
+	-- Diagonal movement
 	else
 		if AJPS.canWalk(self, n.X, node.Y) then
-			table.insert(neighbors, node + Vector2.xAxis)
+			-- table.insert(neighbors, node + Vector2.xAxis)
+			table.insert(neighbors, node + Vector2.new(dir.X, 0))
 		end
 		if AJPS.canWalk(self, node.X, n.Y) then
-			table.insert(neighbors, node + Vector2.yAxis)
+			-- table.insert(neighbors, node + Vector2.yAxis)
+			table.insert(neighbors, node + Vector2.new(0, dir.Y))
 		end
 		-- Check for forced neighbors
 		if not AJPS.canWalk(self, node.X - dir.X, node.Y) and AJPS.canWalk(self, node.X - dir.X, n.Y) then
