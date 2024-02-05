@@ -154,8 +154,12 @@ end
 function CollisionGrid.newAsync(
 	origin: CFrame,
 	gridSize: Vector2,
+	config: CollisionGridConfig,
 	handler: ParallelJobHandler.JobHandler?
 ): CollisionGrid
+	if not config then
+		error("Invalid Config")
+	end
 	origin = origin * CFrame.new(-gridSize.X / 2, 0, -gridSize.Y / 2)
 	local trove = Trove.new()
 	local _handler
@@ -171,6 +175,7 @@ function CollisionGrid.newAsync(
 		Id = HttpService:GenerateGUID(false),
 		Origin = origin,
 		Size = gridSize,
+		Config = config,
 		maps = {} :: { [string]: CollisionMap }, -- [mapName]: CollisionMap
 		queued = {} :: { [string]: ObjectData }, -- [id]: ObjectData
 		objects = {} :: { [string]: Object }, -- [id]: Object
@@ -567,7 +572,12 @@ function CollisionGrid:GetMapPromise(mapName: string): Promise
 end
 
 function CollisionGrid:GetMap(mapName: string): CollisionMap?
-	return self.maps[mapName]
+	local map = self.maps[mapName]
+	if map then
+		return map
+	end
+	local default = self.Config.CollisionMaps[mapName]
+	return newMap(default and default.CollisionsByDefault or false)
 end
 
 function CollisionGrid:ObserveMaps(observer: (name: string, map: CollisionMap) -> ()): RBXScriptConnection
@@ -1016,10 +1026,14 @@ type Object = {
 }
 export type ObjectType = number
 export type ObjectTypeName = "Collision" | "Negation"
+export type CollisionGrid = typeof(CollisionGrid.newAsync(...))
+export type CollisionGridList = { [number]: number }
+-- Config types
 export type CollisionMapConfig = {
 	CollisionsByDefault: boolean,
 }
-export type CollisionGrid = typeof(CollisionGrid.newAsync(...))
-export type CollisionGridList = { [number]: number }
+export type CollisionGridConfig = {
+	CollisionMaps: { [string]: CollisionMapConfig },
+}
 type Promise = typeof(Promise.new(...))
 return CollisionGrid
