@@ -153,11 +153,6 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 					table.insert(nodes, x)
 					table.insert(nodes, z)
 				end
-				-- local dist = (v2 - cellPos).Magnitude
-				-- if math.round(dist - 0.5) <= (widV * size2).Magnitude then
-				-- 	table.insert(nodes, x)
-				-- 	table.insert(nodes, z)
-				-- end
 			end
 		end
 	end
@@ -751,14 +746,14 @@ function CollisionGrid.iterX(
 	obstaclesX: CollisionGridList,
 	iterator: (x: number, z: number) -> ()
 ): ()
-	local numGroups = math.ceil((gridSize.X + 1) / 32)
+	local numGroups = math.ceil((gridSize.Y + 1) / 32)
 	for groupId, group in obstaclesX do
-		local x = math.ceil(groupId / numGroups) - 1
+		local x = math.floor((groupId - 1) / numGroups)
 		local z = ((groupId - 1) % numGroups) * 32
-		for i = 0, 31 do
-			local val = bit32.extract(group, i)
+		for col = 0, 31 do
+			local val = bit32.extract(group, col)
 			if val == 1 then
-				iterator(x, z + i)
+				iterator(x, z + col)
 			end
 		end
 	end
