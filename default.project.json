@@ -1,5 +1,5 @@
 {
-  "name": "Pathfinding ting",
+  "name": "FastAStar",
   "tree": {
     "$className": "DataModel",
 
