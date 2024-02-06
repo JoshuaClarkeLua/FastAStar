@@ -79,7 +79,7 @@ Path.__tostring = function(self)
 	for _, waypoint in ipairs(waypoints) do
 		wps ..= `\nPosition: {waypoint.Position};`
 		if waypoint.Link then
-			wps ..= `Link: {waypoint.Link.id}; Label: {waypoint.Link.label};`
+			wps ..= `Link: {waypoint.Link:GetAttribute("Id")}; Label: {waypoint.Link.Label};`
 		end
 	end
 	return wps
@@ -243,12 +243,17 @@ function Path:_listenForBlocked(): ()
 		end)
 	end
 
-	local function hasNodes(grid: CollisionGrid, nodes: { Vector2 }): boolean
+	local function checkBlocked(grid: CollisionGrid, nodes: { [Vector2]: boolean }): boolean
 		local gridSize = grid:GetSize()
 		local nodeList = _gridNodes[grid]
 		local nodesX = {}
-		for _, node in pairs(nodes) do
+		for node: Vector2, collisionAdded: boolean in pairs(nodes) do
+			-- Return if a collision was not added
+			if collisionAdded == false then
+				continue
+			end
 			if nodeList[node.X] and nodeList[node.X][node.Y] then
+				-- 1. Combine the node from each map
 				local groupId = CollisionGrid.GetGroupId(gridSize.Y, node.X, node.Y)
 				local maps = grid:GetMaps(self._labels)
 				local colByDefault
@@ -257,6 +262,7 @@ function Path:_listenForBlocked(): ()
 					_nodesX, _, colByDefault = CollisionGrid.combineGroups({ [groupId] = true }, nil, maps)
 					nodesX[groupId] = _nodesX[groupId]
 				end
+				-- 2. Check if the node has a collision after combining it from all maps
 				if CollisionGrid.HasCollision(nodesX, gridSize.Y, node.X, node.Y, colByDefault) then
 					return true
 				end
@@ -276,11 +282,8 @@ function Path:_listenForBlocked(): ()
 					scheduleFullCheck()
 				end
 			end)),
-			trove:Add(grid.OnMapChanged:Connect(function(name: string, nodes: { Vector2 }, isCollision: boolean)
-				if not isCollision then
-					return
-				end
-				if not self.IsBlocked and hasNodes(grid, nodes) then
+			trove:Add(grid.OnMapChanged:Connect(function(name: string, nodes: { [Vector2]: boolean })
+				if not self.IsBlocked and checkBlocked(grid, nodes) then
 					self.IsBlocked = true
 					self.OnBlocked:Fire()
 				end

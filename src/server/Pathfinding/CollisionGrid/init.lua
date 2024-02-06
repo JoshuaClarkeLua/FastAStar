@@ -182,7 +182,7 @@ function CollisionGrid.newAsync(
 		--
 		OnMapAdded = trove:Add(Signal.new()), -- (mapName: string, map: CollisionMap)
 		OnMapRemoved = trove:Add(Signal.new()), -- (mapName: string)
-		OnMapChanged = trove:Add(Signal.new()), -- (mapName: string, nodes: { [nodeId]: hasCollision })
+		OnMapChanged = trove:Add(Signal.new()), -- (mapName: string, nodes: { [node: Vector2]: hasCollision })
 		OnDestroy = Signal.new(),
 		_OnResume = Signal.new(), -- added to trove below
 		--
@@ -461,12 +461,11 @@ function CollisionGrid:_ChangeMapNodes(nodes: ObjNodes, mapName: string, type: O
 		local nodeId = NodeUtil.getNodeId(self._gridSize.X, x, z)
 		local newCollisionState = changeMapNode(self, nodeId, x, z, typeMap, groupDefault, nodeDefault, bitSet, bitUnset, add, inverted)
 		if newCollisionState ~= nil then
-			changedNodes[nodeId] = newCollisionState
+			changedNodes[Vector2.new(x, z)] = newCollisionState
 		end
 	end
 
 	if next(changedNodes) ~= nil then
-		-- TODO: Change any code that uses this event to use the new Dictionary formap of 'changedNodes'
 		self.OnMapChanged:Fire(map, changedNodes)
 	end
 end
@@ -647,17 +646,17 @@ end
 
 function CollisionGrid.GetBitsBehind(group: number, col: number, dir: number): number
 	if dir > 0 then
-		return bit32.band(group, Bit32Util.FILL_R[col - 1])
+		return bit32.band(group, Bit32Util.FILL_R[col])
 	else
-		return bit32.band(group, Bit32Util.FILL_L[31 - col - 1])
+		return bit32.band(group, Bit32Util.FILL_L[31 - col])
 	end
 end
 
 function CollisionGrid.GetBitsInFront(group: number, col: number, dir: number): number
 	if dir > 0 then
-		return bit32.band(group, Bit32Util.FILL_L[31 - col - 1])
+		return bit32.band(group, Bit32Util.FILL_L[31 - col])
 	else
-		return bit32.band(group, Bit32Util.FILL_R[col - 1])
+		return bit32.band(group, Bit32Util.FILL_R[col])
 	end
 end
 
