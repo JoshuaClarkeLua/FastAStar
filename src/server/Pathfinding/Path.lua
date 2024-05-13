@@ -13,6 +13,8 @@ type Linker = Linker.Linker
 type LinkPath = Linker.LinkPath
 type RoomLink = Linker.RoomLink
 
+local VISUALIZE_PATHS = true
+
 local function plotLine(x0, y0, x1, y1)
 	x0 = math.round(x0)
 	y0 = math.round(y0)
@@ -84,6 +86,8 @@ Path.__tostring = function(self)
 	end
 	return wps
 end
+local PATH_FOLDER = Instance.new("Folder", workspace)
+PATH_FOLDER.Name = "Paths"
 
 function Path.waypoint(
 	position: Vector3,
@@ -474,6 +478,10 @@ function Path:Compute(start: Vector3, goal: Vector3): Promise
 			self._waypoints = wps
 			self:_listenForBlocked()
 		end
+	end):andThen(function()
+		if VISUALIZE_PATHS then
+			self:Draw()
+		end
 	end)
 end
 
@@ -485,6 +493,55 @@ function Path:Destroy(): Path
 	self._destroyed = true
 	self.trove:Destroy()
 	return self
+end
+
+function Path:Draw(): ()
+	local old = self.__DrawFolder
+	if old then
+		self.trove:Remove(old)
+	end
+	local wps = self:GetWaypoints()
+	if #wps == 0 then
+		return
+	end
+	local folder = Instance.new("Folder")
+	self.__DrawFolder = folder
+	folder.Name = "PathParts"
+	local drawOffset = self.__drawOffset or Vector3.zero
+	local lastP
+	for i = 1, #wps do
+		local node = wps[i].Position
+		local p = Instance.new("Part")
+		p:SetAttribute("Id", i)
+		p.Size = Vector3.one
+		p.Anchored = true
+		p.Position = node + drawOffset
+		p.Parent = folder
+		p.Color = Color3.new(1, 0, 0)
+		p.CanCollide = false
+		p.Transparency = 1
+		local beam = Instance.new("Beam")
+		beam.Width0 = .4
+		beam.Width1 = .4
+		beam.FaceCamera = true
+		beam.Color = ColorSequence.new(Color3.new(1, 0, 0))
+		local a1 = Instance.new("Attachment")
+		a1.Parent = p
+		beam.Attachment0 = a1
+		beam.Parent = p
+		if lastP then
+			local a2 = Instance.new("Attachment")
+			a2.Parent = p
+			lastP.Beam.Attachment1 = a2
+		end
+		lastP = p
+	end
+	folder.Parent = PATH_FOLDER
+	self.trove:Add(folder)
+end
+
+function Path:SetDrawOffset(offset: Vector3): ()
+	self.__drawOffset = offset
 end
 
 type Promise = typeof(Promise.new(...))

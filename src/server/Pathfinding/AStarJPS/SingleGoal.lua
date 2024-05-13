@@ -1,6 +1,8 @@
+--!native
 local Imports = require(script.Parent.Parent.Imports)
 local Vector2Util = Imports.Vector2Util
 local AJPSUtil = require(script.Parent.AJPSUtil)
+local Draw = require(script.Parent.Draw)
 local NodeUtil = require(script.Parent.Parent.NodeUtil)
 local CollisionGrid = require(script.Parent.Parent.CollisionGrid)
 
@@ -60,7 +62,6 @@ function AJPS.findJumpNode(self, node, dir): (number?, number?)
 
 	local r, c, rcGroupId
 	local collisionBit, force
-	-- print(first, group)
 	while true do
 		-- Check if we can reach the goal
 		rcGroupId = _groupId
@@ -140,7 +141,6 @@ function AJPS.findJumpNode(self, node, dir): (number?, number?)
 	end
 
 	local x, z
-
 	if xMov then
 		z, x = CollisionGrid.GetCoords(rowSize, rcGroupId, c)
 	else
@@ -175,16 +175,12 @@ function AJPS.queueJumpNode(self, node, pNode, _g): Vector2?
 		if self.f[nodeId] == nil then
 			self.f[nodeId] = calF(self, node)
 		end
-		if not self.openDict[nodeId] then
-			self.openDict[nodeId] = true
-			self.open:Add(node, g + self.f[nodeId])
-		end
+		self.open:Add(node, g + self.f[nodeId])
 	end
 	return
 end
 
 function AJPS.jump(self, node, pNode, _g): (Vector2?, number?)
-
 	if not canWalk(self, node.X, node.Y) then
 		return
 	end
@@ -232,6 +228,7 @@ function AJPS.jump(self, node, pNode, _g): (Vector2?, number?)
 end
 
 function AJPS.findGoalJPS(self, pNode, pNodeId): Vector2?
+	Draw.clear()
 	while pNode do
 		local neighbors = findNeighbors(self, pNode, self.parents[pNode])
 		local _g = getG(self, pNodeId)
@@ -248,7 +245,6 @@ function AJPS.findGoalJPS(self, pNode, pNodeId): Vector2?
 				return goalNode
 			end
 		end
-
 		pNode, pNodeId = nextNode(self)
 	end
 	return

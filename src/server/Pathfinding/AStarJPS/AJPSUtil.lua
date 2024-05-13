@@ -1,3 +1,4 @@
+--!native
 local Imports = require(script.Parent.Parent.Imports)
 local Vector2Util = Imports.Vector2Util
 local NodeUtil = require(script.Parent.Parent.NodeUtil)

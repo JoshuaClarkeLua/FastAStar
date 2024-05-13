@@ -1,3 +1,4 @@
+--!native
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Imports = require(script.Parent.Imports)
@@ -720,7 +721,7 @@ function CollisionGrid.GetGridFromPos(grids: { [any]: CollisionGrid }, pos: Vect
 	local closestGrid = nil :: CollisionGrid?
 	for _, grid in pairs(validGrids) do
 		local yDiff = pos.Y - grid:GetOrigin().Y
-		if yDiff >= 0 and yDiff < lowYDiff then
+		if yDiff >= -.001 and yDiff < lowYDiff then
 			lowYDiff = yDiff
 			closestGrid = grid
 		end

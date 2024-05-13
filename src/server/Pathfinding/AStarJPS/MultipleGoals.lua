@@ -1,3 +1,4 @@
+--!native
 local Imports = require(script.Parent.Parent.Imports)
 local Vector2Util = Imports.Vector2Util
 local AJPSUtil = require(script.Parent.AJPSUtil)
@@ -100,7 +101,6 @@ function AJPS.findJumpNode(self, node, dir, _g): (number?, number?)
 
 	local r, c, rcGroupId
 	local collisionBit
-	-- print(first, group)
 	while true do
 		-- Check if we can reach the goal
 		rcGroupId = _groupId
@@ -218,13 +218,8 @@ function AJPS.queueJumpNode(self, node, pNode, _g): Vector2?
 	-- get node gcost
 	if g < getG(self, nodeId) then
 		self.parents[node] = pNode
-		if g < getG(self, nodeId) then
-			self.g[nodeId] = g
-		end
-		if not self.openDict[nodeId] then
-			self.openDict[nodeId] = true
-			self.open:Add(node, g)
-		end
+		self.g[nodeId] = g
+		self.open:Add(node, g)
 	end
 	return
 end

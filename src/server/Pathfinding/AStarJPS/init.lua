@@ -145,6 +145,9 @@ function AJPS.findPath(
 	end
 	-- Reconstruct path
 	reconstructPath(self, goalNode)
+	if #self.path > 0 and goal ~= self.goal then
+		table.insert(self.path, 1, goal)
+	end
 	return self.path, self
 end
 
