@@ -26,7 +26,7 @@ for mapName, mapConfig in pairs(GridConfig.CollisionMaps) do
 	grid:AddMap(mapName, mapConfig.CollisionsByDefault)
 end
 
---[[ for _, part: BasePart in ipairs(workspace.Objects:GetChildren()) do
+for _, part: BasePart in ipairs(workspace.Objects:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
 	grid:SetObjectAsync(id, part.CFrame, part.Size)
@@ -36,7 +36,7 @@ end
 	end)
 end
 
-for _, part: BasePart in ipairs(workspace.InvertedObjects:GetChildren()) do
+--[[ for _, part: BasePart in ipairs(workspace.InvertedObjects:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
 	grid:SetObjectAsync(id, part.CFrame, part.Size)
@@ -46,6 +46,9 @@ for _, part: BasePart in ipairs(workspace.InvertedObjects:GetChildren()) do
 	end)
 end ]]
 
+local debrisFolder = Instance.new("Folder")
+debrisFolder.Name = "Debris"
+debrisFolder.Parent = workspace
 local function _doAttachment(parent: BasePart, pos: Vector3): Attachment
 	local p = Instance.new("Attachment")
 	p.Parent = parent
@@ -57,21 +60,31 @@ local function _doPart(pos: Vector3): BasePart
 	p.Anchored = true
 	p.Size = Vector3.one
 	p.Position = pos
-	p.Parent = workspace
+	p.Parent = debrisFolder
 	return p
 end
-
---[[ local maps = grid:GetMaps({'main'})
-local colX = CollisionGrid.combineMaps(maps)
-CollisionGrid.iterX(grid:GetSize(), colX, function(x,z)
-	local p = _doAttachment(base, grid:ToWorldSpace(Vector3.new(x,bSize2.Y,z)))
-	p:SetAttribute("Pos", `{x}, {z}`)
-end) ]]
+local function clear()
+	base:ClearAllChildren()
+	debrisFolder:ClearAllChildren()
+end
 
 local path = Path.new(linker, {grid}, {'main'})
 path:SetDrawOffset(Vector3.new(0,bSize2.Y,0))
 local function doPath()
 	path:Compute(workspace.START.CFrame.Position, workspace.GOAL.CFrame.Position)
+		-- :andThen(function()
+		-- 	local maps = grid:GetMaps({'main'})
+		-- 	local colX = CollisionGrid.combineMaps(maps)
+		-- 	clear()
+		-- 	CollisionGrid.iterX(grid:GetSize(), colX, function(x,z)
+		-- 		local pos = grid:ToWorldSpace(Vector3.new(x,bSize2.Y,z))
+		-- 		local att = _doAttachment(base, pos)
+		-- 		local p = _doPart(pos)
+		-- 		p.Position = pos + Vector3.one/2
+		-- 		p.Transparency = .7
+		-- 		p.Color = Color3.new(1,0,0)
+		-- 	end)
+		-- end)
 end
 
 workspace.START:GetPropertyChangedSignal("CFrame"):Connect(doPath)

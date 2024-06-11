@@ -57,16 +57,9 @@ function AJPS._setup(
 	collisionsZ: CollisionGrid.CollisionGridList,
 	collisionsByDefault: boolean?
 )
-	start = Vector2Util.floor(start)
-	-- Return if start or goal is outside of grid
-	if not GridUtil.isInGrid(gridSize.X, gridSize.Y, start.X, start.Y) then
-		return false, {}
-	end
-	--
 	local self = {}
 	self.collisionsByDefault = collisionsByDefault
 	self.gridSize = gridSize
-	self.start = start
 	-- Setup map lists
 	self.costsX, self.costsZ = collisionsX, collisionsZ
 	--
@@ -79,15 +72,39 @@ function AJPS._setup(
 	self.parents = {}
 	--
 	self.g = {}
-	local startNodeId = NodeUtil.getNodeId(gridSize.X, start.X, start.Y)
+	
+	-- Setup start position
+	local validStart = true
+	local _start = Vector2Util.floor(start)
+	-- Try to get unobstructed start position
+	-- Look around the original start position to avoid false positive collisions
+	if not AJPSUtil.canWalk(self, _start.X, _start.Y) then
+		validStart = false
+		-- Check the closest nodes to the original position first
+		local nodes = {} -- {{Vector2, Distance}}
+		for _, dir in ipairs(GridUtil.DIR) do
+			local n = _start + dir
+			local dist = (n - start).Magnitude
+			table.insert(nodes, {n, dist})
+		end
+		table.sort(nodes, function(a,b)
+			return a[2] < b[2]
+		end)
+		for _, node in ipairs(nodes) do
+			local n = node[1]
+			if AJPSUtil.canWalk(self, n.X, n.Y) then
+				_start = n
+				validStart = true
+				break
+			end
+		end
+	end
+	self.start = _start
+	local startNodeId = NodeUtil.getNodeId(gridSize.X, _start.X, _start.Y)
 	self.startNodeId = startNodeId
 	self.g[startNodeId] = 0
-	-- Check if start or goal is obstructed
-	if not AJPSUtil.canWalk(self, start.X, start.Y) then
-		return false, self
-	end
 
-	return true, self
+	return validStart, self
 end
 
 function AJPS._getGoalData(self, goal: Vector2)

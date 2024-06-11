@@ -77,14 +77,14 @@ local Path = {}
 Path.__index = Path
 Path.__tostring = function(self)
 	local waypoints = self:GetWaypoints()
-	local wps = `Path has {#waypoints} waypoints:\n`
+	local wps = `\nPath has {#waypoints} waypoints:\n`
 	for _, waypoint in ipairs(waypoints) do
 		wps ..= `\nPosition: {waypoint.Position};`
 		if waypoint.Link then
 			wps ..= `Link: {waypoint.Link:GetAttribute("Id")}; Label: {waypoint.Link.Label};`
 		end
 	end
-	return wps
+	return wps .. `\n`
 end
 local PATH_FOLDER = Instance.new("Folder", workspace)
 PATH_FOLDER.Name = "Paths"
