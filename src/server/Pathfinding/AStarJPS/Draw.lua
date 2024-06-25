@@ -1,5 +1,3 @@
-local ServerScriptService = game:GetService("ServerScriptService")
-local CollisionGrid = require(ServerScriptService.Server.Pathfinding.CollisionGrid)
 local cf = CFrame.fromOrientation(0, math.rad(90), 0) + Vector3.new(131.211, 227.5, 394.596)
 local size = Vector2.new(260,260)
 

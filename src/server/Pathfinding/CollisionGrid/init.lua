@@ -2,7 +2,6 @@
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Imports = require(script.Parent.Imports)
-local ParallelJobHandler = require(ReplicatedStorage.Packages.ParallelJobHandler)
 local Promise = require(ReplicatedStorage.Packages.Promise)
 local Signal = require(ReplicatedStorage.Packages.Signal)
 local Trove = require(ReplicatedStorage.Packages.Trove)
@@ -11,8 +10,6 @@ local Vector3Util = Imports.Vector3Util
 local Bit32Util = require(script.Parent.Bit32Util)
 local GridUtil = require(script.Parent.GridUtil)
 local NodeUtil = require(script.Parent.NodeUtil)
-
-type JobHandler = ParallelJobHandler.JobHandler
 
 local XZ = Vector3.new(1, 0, 1)
 local PAD = 1 / 4
@@ -152,47 +149,30 @@ function CollisionGrid.getNodesInBox(origin, gridSize, cf, size): ObjNodes
 	return nodes
 end
 
-function CollisionGrid.newAsync(
+function CollisionGrid.new(
 	origin: CFrame,
 	gridSize: Vector2,
-	config: CollisionGridConfig,
-	handler: ParallelJobHandler.JobHandler?
+	config: CollisionGridConfig
 ): CollisionGrid
 	if not config then
 		error("Invalid Config")
 	end
 	origin = origin * CFrame.new(-gridSize.X / 2, 0, -gridSize.Y / 2)
 	local trove = Trove.new()
-	local _handler
-	if not handler then
-		_handler = trove:Add(ParallelJobHandler.new(script.Handler, 64, false))
-	else
-		_handler = handler
-	end
-	if not _handler.IsReady then
-		_handler.OnReady:Wait()
-	end
 	local self = setmetatable({
 		Id = HttpService:GenerateGUID(false),
 		Origin = origin,
 		Size = gridSize,
 		Config = config,
 		maps = {} :: { [string]: CollisionMap }, -- [mapName]: CollisionMap
-		queued = {} :: { [string]: ObjectData }, -- [id]: ObjectData
 		objects = {} :: { [string]: Object }, -- [id]: Object
 		--
 		OnMapAdded = trove:Add(Signal.new()), -- (mapName: string, map: CollisionMap)
 		OnMapRemoved = trove:Add(Signal.new()), -- (mapName: string)
 		OnMapChanged = trove:Add(Signal.new()), -- (mapName: string, nodes: { [node: Vector2]: hasCollision })
 		OnDestroy = Signal.new(),
-		_OnResume = Signal.new(), -- added to trove below
 		--
 		_trove = trove,
-		_handler = _handler,
-		_job = _handler:NewJob("CollisionGrid"),
-		_paused = 0, -- Keeps track of times PauseAsync is called
-		_origin = origin, -- TODO: deprecated, Remove this
-		_gridSize = gridSize, -- TODO: deprecated, Remove this
 		_numGroupsX = math.ceil(gridSize.X / 32),
 		_numGroupsZ = math.ceil(gridSize.Y / 32),
 	}, CollisionGrid)
@@ -200,117 +180,13 @@ function CollisionGrid.newAsync(
 	trove:Add(function()
 		self.OnDestroy:Fire()
 		self.OnDestroy:Destroy()
-		self._OnResume:Fire()
-		self._OnResume:Destroy()
 	end)
 
-	-- Setup job
-	local job = self._job
-	if handler then -- No need if handler is nil (handler will get destroyed instead)
-		trove:Add(function()
-			_handler:Remove(self._job)
-		end)
-	end
-	job:SetSharedTable(
-		"Data",
-		SharedTable.new({
-			origin = origin,
-			gridSize = gridSize,
-		})
-	)
-	trove:Add(function()
-		(self._job :: ParallelJobHandler.Job):SetSharedTable("Data", nil)
-	end)
-
-	-- Setup Job functions
-	local function GetNodesInBox(actor): ()
-		actor:SendMessage("GetNodesInBox", self:_GetQueued(32))
-		return next(self.queued) == nil
-	end
-	self._GetNodesInBox = GetNodesInBox
-
-	-- Setup topic handlers
-	--[[
-		TOPIC -> GetNodesInBox
-	]]
-	local function recvGetNodesInBox(id: string, nodes: ObjNodes, ...: string & ObjNodes): ()
-		if id == nil then
-			return
-		end
-		if self.objects[id] ~= nil then
-			local object = self.objects[id]
-			-- Remove object old nodes that are not in the new nodes
-			local oldNodes = object.nodes
-			if oldNodes ~= nil then
-				for mapName, data in pairs(object.maps) do
-					removeMapNodes(self, object.nodes, mapName, data.type, data.invert)
-				end
-			end
-			-- Add new nodes
-			object.nodes = nodes
-			for mapName, data in pairs(object.maps) do
-				addMapNodes(self, object.nodes, mapName, data.type, data.invert)
-			end
-		end
-		--
-		return recvGetNodesInBox(...)
-	end
-	job:BindTopic("GetNodesInBox", function(actor, ...: string & ObjNodes)
-		recvGetNodesInBox(...)
-	end)
 	return self
 end
 
 function CollisionGrid:Destroy(): ()
 	self._trove:Destroy()
-end
-
-function CollisionGrid:PauseAsync(): ()
-	self._paused += 1
-	if self._job.Running then
-		self._job.OnFinished:Wait()
-		if not self._job.Active then
-			return
-		end
-	end
-end
-
-function CollisionGrid:ResumeAsync(_notDecreasePause: boolean?): ()
-	local fireResume = false
-	if self._paused > 0 then
-		if _notDecreasePause ~= true then
-			self._paused -= 1
-		end
-		if self._paused == 0 then
-			fireResume = true
-		else
-			self._OnResume:Wait()
-		end
-	end
-	if next(self.queued) ~= nil then
-		self._job:Run(self._GetNodesInBox)
-	end
-	if fireResume then
-		self._OnResume:Fire()
-	end
-end
-
-function CollisionGrid:WaitForResume(): ()
-	if self._paused > 0 then
-		self._OnResume:Wait()
-	end
-end
-
-function CollisionGrid:_GetQueued(amount: number): ...string & CFrame & Vector3
-	if amount == 0 then
-		return
-	end
-	local id, data = next(self.queued)
-	if id == nil then
-		return
-	end
-	self.queued[id] = nil
-	return id, data[1], data[2], self:_GetQueued(amount - 1)
 end
 
 function CollisionGrid:AddMap(map: string, collisionsByDefault: boolean?): ()
@@ -336,15 +212,29 @@ function CollisionGrid:HasMap(map: string): boolean
 	return self.maps[map] ~= nil
 end
 
-function CollisionGrid:SetObjectAsync(id: string, cf: CFrame, size: Vector3): ()
-	-- Create object table if it does not exist
-	if not self.objects[id] then
-		self.objects[id] = {
+function CollisionGrid:SetObject(id: string, cf: CFrame, size: Vector3): ()
+	local object = self.objects[id]
+	local nodes = CollisionGrid.getNodesInBox(self.Origin, self.Size, cf, size)
+	if object ~= nil then
+		-- Remove object old nodes that are not in the new nodes
+		local oldNodes = object.nodes
+		if oldNodes ~= nil then
+			for mapName, data in pairs(object.maps) do
+				removeMapNodes(self, object.nodes, mapName, data.type, data.invert)
+			end
+		end
+	else
+		-- Create object table if it does not exist
+		object = {
 			maps = {},
 		}
+		self.objects[id] = object
 	end
-	self.queued[id] = { cf, size }
-	self:ResumeAsync(true)
+	-- Add new nodes
+	object.nodes = nodes
+	for mapName, data in pairs(object.maps) do
+		addMapNodes(self, object.nodes, mapName, data.type, data.invert)
+	end
 end
 
 function CollisionGrid:RemoveObject(id: string): ()
@@ -353,12 +243,8 @@ function CollisionGrid:RemoveObject(id: string): ()
 		return
 	end
 	self.objects[id] = nil
-	if object.nodes == nil then
-		self.queued[id] = nil
-	else
-		for map, data in pairs(object.maps) do
-			removeMapObject(self, object, map)
-		end
+	for map, data in pairs(object.maps) do
+		removeMapObject(self, object, map)
 	end
 end
 
@@ -459,7 +345,7 @@ function CollisionGrid:_ChangeMapNodes(nodes: ObjNodes, mapName: string, type: O
 	for i = 1, #nodes, 2 do
 		local x = nodes[i]
 		local z = nodes[i + 1]
-		local nodeId = NodeUtil.getNodeId(self._gridSize.X, x, z)
+		local nodeId = NodeUtil.getNodeId(self.Size.X, x, z)
 		local newCollisionState = changeMapNode(self, nodeId, x, z, typeMap, groupDefault, nodeDefault, bitSet, bitUnset, add, inverted)
 		if newCollisionState ~= nil then
 			changedNodes[Vector2.new(x, z)] = newCollisionState
@@ -530,47 +416,6 @@ function CollisionGrid:GetObjectType(id: string, map: string): ObjectTypeName?
 	return
 end
 
-function CollisionGrid:GetMapAsync(mapName: string): CollisionMap?
-	if not self.maps[mapName] then
-		return
-	end
-	if self._job.Running then
-		self._job.OnFinished:Wait()
-		if not self._job.Active then
-			return
-		end
-	end
-	return self.maps[mapName]
-end
-
-function CollisionGrid:GetMapPromise(mapName: string): Promise
-	if not self.maps[mapName] then
-		return
-	end
-	if not self._job.Running then
-		return Promise.resolve(self.maps[mapName])
-	end
-	local promise = Promise.fromEvent(self._job.OnFinished)
-		:andThen(function()
-			if not self._job.Active then
-				local p = Promise.new()
-				p:cancel()
-				return p
-			end
-			return
-		end)
-		:andThen(function()
-			local map = self.maps[mapName]
-			if not map then
-				local p = Promise.new()
-				p:cancel()
-				return p
-			end
-			return map
-		end)
-	return promise
-end
-
 function CollisionGrid:GetMap(mapName: string): CollisionMap?
 	local map = self.maps[mapName]
 	if map then
@@ -588,11 +433,11 @@ function CollisionGrid:ObserveMaps(observer: (name: string, map: CollisionMap) -
 end
 
 function CollisionGrid:GetSize(): Vector2
-	return self._gridSize
+	return self.Size
 end
 
 function CollisionGrid:GetOrigin(): CFrame
-	return self._origin
+	return self.Origin
 end
 
 function CollisionGrid:ToGridSpace(pos: Vector3): Vector3
@@ -1026,7 +871,7 @@ type Object = {
 }
 export type ObjectType = number
 export type ObjectTypeName = "Collision" | "Negation"
-export type CollisionGrid = typeof(CollisionGrid.newAsync(...))
+export type CollisionGrid = typeof(CollisionGrid.new(...))
 export type CollisionGridList = { [number]: number }
 -- Config types
 export type CollisionMapConfig = {
