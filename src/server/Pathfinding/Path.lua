@@ -124,7 +124,7 @@ function Path.new(linker: Linker, collisionGrids: { CollisionGrid }, labels: { s
 		IsBlocked = false,
 		NoPath = true,
 		--
-		_OnBlocked = trove:Add(Signal.new()),
+		Blocked = trove:Add(Signal.new()),
 		--
 		_linker = linker,
 		_grids = grids,
@@ -132,7 +132,7 @@ function Path.new(linker: Linker, collisionGrids: { CollisionGrid }, labels: { s
 		_labelDict = _labels,
 		_mapName = Linker.GetMapName(labels),
 		_waypoints = nil :: { Waypoint }?,
-		_destroyed = false,
+		Destroyed = false,
 	}, Path)
 	return self
 end
@@ -142,7 +142,7 @@ function Path:_getGridFromPos(pos: Vector3): CollisionGrid?
 end
 
 function Path:_listenForBlocked(): ()
-	if self._destroyed then
+	if self.Destroyed then
 		return
 	end
 	-- Clear block trove
@@ -204,7 +204,7 @@ function Path:_listenForBlocked(): ()
 		_checkScheduled = true
 		local thread
 		thread = trove:Add(task.defer(function()
-			if self._destroyed or self.IsBlocked then
+			if self.Destroyed or self.IsBlocked then
 				return
 			end
 			local nodes = _gridNodes[grid]
@@ -216,7 +216,7 @@ function Path:_listenForBlocked(): ()
 				for z in pairs(zT) do
 					if CollisionGrid.HasCollision(colX, grid:GetSize().Y, x, z, colByDefault) then
 						self.IsBlocked = true
-						self._OnBlocked:Fire()
+						self.Blocked:Fire()
 						return
 					end
 				end
@@ -268,7 +268,7 @@ function Path:_listenForBlocked(): ()
 			trove:Add(grid.OnMapChanged:Connect(function(name: string, nodes: { [Vector2]: boolean })
 				if not self.IsBlocked and checkBlocked(grid, nodes) then
 					self.IsBlocked = true
-					self._OnBlocked:Fire()
+					self.Blocked:Fire()
 				end
 			end)),
 		}
@@ -281,7 +281,7 @@ function Path:_listenForBlocked(): ()
 			trove:Remove(conn)
 			if not self.IsBlocked then
 				self.IsBlocked = true
-				self._OnBlocked:Fire()
+				self.Blocked:Fire()
 			end
 		end))
 	end
@@ -293,7 +293,7 @@ function Path:_listenForBlocked(): ()
 		end
 		if not self.IsBlocked and _links[link] then
 			self.IsBlocked = true
-			self._OnBlocked:Fire()
+			self.Blocked:Fire()
 		end
 	end))
 
@@ -302,8 +302,8 @@ function Path:_listenForBlocked(): ()
 	end)
 end
 
-function Path:Compute(start: Vector3, goal: Vector3): ()
-	if self._destroyed then
+function Path:ComputeAsync(start: Vector3, goal: Vector3): ()
+	if self.Destroyed then
 		return
 	end
 	assert(start, "Invalid argument #2: 'start' is nil")
@@ -346,7 +346,6 @@ function Path:Compute(start: Vector3, goal: Vector3): ()
 		Attempt to find path if start and goal are in the same grid
 	]]
 	if fromGrid == toGrid then
-		-- debug.profilebegin("Path:Compute() - 2")
 		local maps = {}
 		for _, label in ipairs(self._labels) do
 			local map = fromGrid:GetMap(label)
@@ -363,7 +362,6 @@ function Path:Compute(start: Vector3, goal: Vector3): ()
 			end
 		end
 		--
-		-- debug.profileend()
 	end
 
 	if #wps == 0 then
@@ -372,9 +370,7 @@ function Path:Compute(start: Vector3, goal: Vector3): ()
 
 			Attempt to get link path
 		]]
-		-- debug.profilebegin("Path:Compute() - 3")
 		local linkPath = linker:FindLinkPath(self._labels, fromPos, toPos, fromGrid, toGrid)
-		-- debug.profileend()
 		if #linkPath == 0 then
 			return
 		end
@@ -385,7 +381,6 @@ function Path:Compute(start: Vector3, goal: Vector3): ()
 			Construct path from gridStart to gridGoal using link path (if any)
 		]]
 		if #linkPath > 1 then
-			-- debug.profilebegin("Path:Compute() - 4")
 			local lastPos = toPos
 			for i = 1, #linkPath, 2 do
 				-- Get link pair
@@ -459,7 +454,6 @@ function Path:Compute(start: Vector3, goal: Vector3): ()
 					Path.waypoint(fromGrid:ToWorldSpace(Vector3.new(node.X, 0, node.Y)), nil, nil, fromGrid, node)
 				)
 			end
-			-- debug.profileend()
 		end
 	end
 
@@ -478,24 +472,18 @@ function Path:GetWaypoints(): { Waypoint }
 	return self._waypoints or {}
 end
 
-function Path:OnBlocked(listener: () -> ()): RBXScriptConnection
-	if self._destroyed then
-		error("Path is destroyed!")
-	end
-	return self._OnBlocked:Connect(listener)
-end
-
 function Path:Destroy(): Path
-	if self._destroyed then
+	if self.Destroyed then
 		return
 	end
-	self._destroyed = true
+	self.Destroyed = true
+	self.Blocked = nil
 	self.trove:Destroy()
 	return self
 end
 
 function Path:Draw(): ()
-	if self._destroyed then
+	if self.Destroyed then
 		return
 	end
 	local old = self.__DrawFolder
@@ -543,7 +531,7 @@ function Path:Draw(): ()
 end
 
 function Path:SetDrawOffset(offset: Vector3): ()
-	if self._destroyed then
+	if self.Destroyed then
 		return
 	end
 	self.__drawOffset = offset

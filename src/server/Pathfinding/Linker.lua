@@ -480,6 +480,7 @@ Linker.__index = Linker
 function Linker.new()
 	local self = setmetatable({
 		OnLinkRemoved = Signal.new(), -- (link: RoomLink)
+		_destroyed = false,
 	}, Linker)
 
 	self._grids = {} :: {[string]: GridData} -- mapName -> GridData
@@ -489,12 +490,19 @@ function Linker.new()
 end
 
 function Linker:Destroy(): ()
+	if self._destroyed then
+		return
+	end
+	self._destroyed = true
 	for _, grid in pairs(self._grids) do
 		grid.trove:Destroy()
 	end
 end
 
 function Linker:_AddGrid(grid: CollisionGrid): ()
+	if self._destroyed then
+		error('Linker is destroyed')
+	end
 	if self._grids[grid.Id] then
 		error(`Grid '{grid.Id}' already exists!`)
 	end
@@ -591,6 +599,9 @@ do
 end
 
 function Linker:AddLink(id: string, cost: number, fromPos: Vector2, toPos: Vector2, fromGrid: CollisionGrid, toGrid: CollisionGrid?, bidirectional: boolean?, metadata: any): ()
+	if self._destroyed then
+		error('Linker is destroyed')
+	end
 	assert(cost, 'Cost must be a number')
 	assert(self._links[`{id}_0`] == nil, 'A Link with this id already exists')
 	toGrid = toGrid or fromGrid
@@ -619,7 +630,10 @@ end
 
 function Linker:RemoveLink(id: string): ()
 	for _, key in pairs(getLinkKeys(id)) do
-		removeLink(self, self._links[key])
+		local link = self._links[key]
+		if link then
+			removeLink(self, link)
+		end
 	end
 end
 
