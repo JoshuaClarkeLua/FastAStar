@@ -10,7 +10,7 @@ local bSize2 = bSize/2
 local origin = base.CFrame
 local gridSize = Vector2.new(bSize.X, bSize.Z)
 
-local costGrid = CollisionGrid.newAsync(origin, gridSize)
+local costGrid = CollisionGrid.new(origin, gridSize)
 origin = costGrid:GetOrigin()
 costGrid:AddMap("main")
 
@@ -42,7 +42,7 @@ for _, part: BasePart in ipairs(workspace.Negations:GetChildren()) do
 	costGrid:AddMapObject(id, 'main', 'Negation')
 end
 
-local mainMap = costGrid:GetMapAsync("main")
+local mainMap = costGrid:GetMap("main")
 
 
 

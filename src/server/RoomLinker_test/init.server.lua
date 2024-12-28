@@ -21,8 +21,8 @@ local Floor2Size2 = Floor2.Size/2
 local Floor1GridSize = Vector2.new(Floor1.Size.X, Floor1.Size.Z)
 local Floor2GridSize = Vector2.new(Floor2.Size.X, Floor2.Size.Z)
 
-local Floor1Grid = CollisionGrid.newAsync(Floor1.CFrame, Floor1GridSize)
-local Floor2Grid = CollisionGrid.newAsync(Floor2.CFrame, Floor2GridSize)
+local Floor1Grid = CollisionGrid.new(Floor1.CFrame, Floor1GridSize)
+local Floor2Grid = CollisionGrid.new(Floor2.CFrame, Floor2GridSize)
 Floor1Grid:AddMap("Main")
 Floor2Grid:AddMap("Main")
 
@@ -31,32 +31,32 @@ Floor2Grid:AddMap("Main")
 for _, part: BasePart in ipairs(workspace.Floor1.Objects:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
-	Floor1Grid:SetObjectAsync(id, part.CFrame, part.Size)
+	Floor1Grid:SetObject(id, part.CFrame, part.Size)
 	Floor1Grid:AddMapObject(id, 'Main', 'Collision')
 
 	part:GetPropertyChangedSignal('CFrame'):Connect(function()
-		Floor1Grid:SetObjectAsync(id, part.CFrame, part.Size)
+		Floor1Grid:SetObject(id, part.CFrame, part.Size)
 	end)
 	part:GetPropertyChangedSignal('Size'):Connect(function()
-		Floor1Grid:SetObjectAsync(id, part.CFrame, part.Size)
+		Floor1Grid:SetObject(id, part.CFrame, part.Size)
 	end)
 end
 for _, part: BasePart in ipairs(workspace.Floor2.Objects:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
-	Floor2Grid:SetObjectAsync(id, part.CFrame, part.Size)
+	Floor2Grid:SetObject(id, part.CFrame, part.Size)
 	Floor2Grid:AddMapObject(id, 'Main', 'Collision')
 
 	part:GetPropertyChangedSignal('CFrame'):Connect(function()
-		Floor2Grid:SetObjectAsync(id, part.CFrame, part.Size)
+		Floor2Grid:SetObject(id, part.CFrame, part.Size)
 	end)
 	part:GetPropertyChangedSignal('Size'):Connect(function()
-		Floor2Grid:SetObjectAsync(id, part.CFrame, part.Size)
+		Floor2Grid:SetObject(id, part.CFrame, part.Size)
 	end)
 end
 
-local Floor1Map = Floor1Grid:GetMapAsync("Main")
-local Floor2Map = Floor2Grid:GetMapAsync("Main")
+local Floor1Map = Floor1Grid:GetMap("Main")
+local Floor2Map = Floor2Grid:GetMap("Main")
 local grids = {Floor1Grid, Floor2Grid}
 
 

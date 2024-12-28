@@ -20,7 +20,7 @@ local bSize2 = bSize/2
 local origin = base.CFrame
 local gridSize = Vector2.new(bSize.X, bSize.Z)
 
-local grid = CollisionGrid.newAsync(origin, gridSize, GridConfig)
+local grid = CollisionGrid.new(origin, gridSize, GridConfig)
 local linker = Linker.new()
 for mapName, mapConfig in pairs(GridConfig.CollisionMaps) do
 	grid:AddMap(mapName, mapConfig.CollisionsByDefault)
@@ -29,20 +29,20 @@ end
 for _, part: BasePart in ipairs(workspace.Objects:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
-	grid:SetObjectAsync(id, part.CFrame, part.Size)
+	grid:SetObject(id, part.CFrame, part.Size)
 	grid:AddMapObject(id, 'main', 'Collision')
 	part:GetPropertyChangedSignal("CFrame"):Connect(function()
-		grid:SetObjectAsync(id, part.CFrame, part.Size)
+		grid:SetObject(id, part.CFrame, part.Size)
 	end)
 end
 
 --[[ for _, part: BasePart in ipairs(workspace.InvertedObjects:GetChildren()) do
 	local id = HttpService:GenerateGUID(false)
 	part:SetAttribute("Id", id)
-	grid:SetObjectAsync(id, part.CFrame, part.Size)
+	grid:SetObject(id, part.CFrame, part.Size)
 	grid:AddMapObject(id, 'main', 'Collision', true)
 	part:GetPropertyChangedSignal("CFrame"):Connect(function()
-		grid:SetObjectAsync(id, part.CFrame, part.Size)
+		grid:SetObject(id, part.CFrame, part.Size)
 	end)
 end ]]
 
@@ -71,7 +71,8 @@ end
 local path = Path.new(linker, {grid}, {'main'})
 path:SetDrawOffset(Vector3.new(0,bSize2.Y,0))
 local function doPath()
-	path:Compute(workspace.START.CFrame.Position, workspace.GOAL.CFrame.Position)
+	path:ComputeAsync(workspace.START.CFrame.Position, workspace.GOAL.CFrame.Position)
+	path:Draw()
 		-- :andThen(function()
 		-- 	local maps = grid:GetMaps({'main'})
 		-- 	local colX = CollisionGrid.combineMaps(maps)

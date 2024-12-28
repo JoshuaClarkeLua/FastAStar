@@ -1,5 +1,5 @@
 [package]
-name = "jcl/FastAStar"
+name = "jcl/fastastar"
 version = "0.1.1"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
